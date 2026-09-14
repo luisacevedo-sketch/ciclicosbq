@@ -1,0 +1,2317 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Inventario Cíclico · Altipal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- Firebase (sincronización en tiempo real entre varias personas/tablets) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --azul-oscuro:#003C7E; --azul-claro:#0057B8; --azul-suave:#EAF1FB; --gris:#FFFFFF;
+    --rojo:#F8A9A9; --amarillo:#FFF2A8; --azul-alerta:#A9C9F8; --verde:#B7E6B0;
+    --diferencia:#FFCC66;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',Arial,sans-serif;margin:0;background:var(--azul-suave);color:#1a1a1a;}
+  header{background:linear-gradient(90deg,var(--azul-oscuro),var(--azul-claro));color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:4px solid #fff;}
+  header h1{font-size:16px;margin:0;color:#fff;}
+  .btn{background:var(--azul-claro);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;}
+  .btn:hover{opacity:.9;}
+  .btn.secundario{background:#fff;color:var(--azul-oscuro);border:1px solid var(--azul-oscuro);}
+  .btn.rojo{background:#C0392B;}
+  .btn.verde{background:#1E8449;}
+  main{padding:16px;max-width:1300px;margin:0 auto;}
+  .card{background:#fff;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,60,126,.12);border-top:3px solid var(--azul-oscuro);}
+  .card h2{font-size:15px;color:var(--azul-oscuro);margin-top:0;}
+  .fila{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  input[type=text],input[type=password],input[type=number],select{padding:6px 8px;border:1px solid #B9CCE6;border-radius:6px;font-size:13px;background:#fff;}
+  table{border-collapse:collapse;width:100%;font-size:11px;background:#fff;}
+  th,td{border:1px solid #cddcef;padding:4px 5px;text-align:center;}
+  .oculto{display:none;}
+  #loginOverlay{position:fixed;inset:0;background:rgba(0,60,126,.92);display:flex;align-items:center;justify-content:center;z-index:999;}
+  .loginBox{background:#fff;padding:26px;border-radius:10px;width:280px;text-align:center;border-top:4px solid var(--azul-oscuro);}
+  .loginBox h2{color:var(--azul-oscuro);}
+  .legend{display:flex;gap:14px;font-size:12px;margin:8px 0;flex-wrap:wrap;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .swatch{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid #999;}
+  .ciclico-item{border:1px solid #cddcef;border-left:4px solid var(--azul-claro);border-radius:8px;padding:10px;cursor:pointer;background:#fff;margin-bottom:8px;}
+  .ciclico-item:hover{border-color:var(--azul-claro);background:var(--azul-suave);}
+  .cabecera-pdf{border:1px solid #999;font-size:11px;margin-bottom:8px;}
+  .cabecera-pdf td{border:1px solid #999;padding:4px 6px;font-weight:bold;background:var(--azul-suave);}
+  .cabecera-pdf td.val{font-weight:normal;background:#fff;}
+  .tabla-scroll{max-height:60vh;overflow:auto;border:1px solid #cddcef;border-radius:6px;}
+  th.headTabla{background:var(--azul-oscuro);color:#fff;position:sticky;top:0;z-index:2;}
+  /* Columnas inmovilizadas (Código de artículo, Número de variante, Factor): se quedan
+     visibles al desplazarse hacia la derecha para digitar hasta Altura 6, así el operario
+     no pierde de vista a qué referencia le corresponde cada conteo. */
+  .col-fija{position:sticky;z-index:3;background:#fff;box-shadow:inset -1px 0 0 #B9CCE6;}
+  th.col-fija{z-index:4;}
+  .registro-input{width:55px;padding:2px;text-align:center;}
+  tr.fila-vencimiento td{border-top:none;padding:3px 6px;font-size:11px;}
+  tr.fila-altura-extra td{border-top:none;padding:2px 4px;font-size:10px;}
+  .venc-input{padding:2px 4px;border:1px solid #B9CCE6;border-radius:4px;font-size:11px;}
+  tr.fila-rojo td{background:var(--rojo);}
+  tr.fila-amarillo td{background:var(--amarillo);}
+  tr.fila-azul td{background:var(--azul-alerta);}
+  tr.fila-verde td{background:var(--verde);}
+  tr.fila-diferencia td{outline:3px solid var(--diferencia);}
+  .dashboard-resumen{font-size:13px;}
+  .dashboard-resumen td,.dashboard-resumen th{padding:6px 10px;}
+  /* Quita las flechas (spinners) de los campos numéricos: al digitar los conteos
+     solo se escriben los números, sin flechas arriba/abajo */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+  input[type=number]{-moz-appearance:textfield;}
+  .pdf-pagina{position:relative;}
+  .pdf-marca-agua{position:absolute;top:6px;left:10px;font-size:13px;font-weight:bold;color:rgba(0,60,126,.4);letter-spacing:.5px;}
+</style>
+</head>
+<body>
+
+<div id="loginOverlay">
+  <div class="loginBox" style="width:300px;">
+    <h2>🔒 Acceso restringido</h2>
+    <p style="font-size:13px;">Ingresa el usuario y la contraseña del equipo para entrar al conteo compartido</p>
+    <div style="text-align:left;font-size:12px;margin-bottom:4px;">Usuario</div>
+    <input type="text" id="usuarioInput" placeholder="BARRANQUILLA" style="width:100%;margin-bottom:8px;">
+    <div style="text-align:left;font-size:12px;margin-bottom:4px;">Contraseña</div>
+    <div style="position:relative;width:100%;">
+      <input type="password" id="passInput" placeholder="Contraseña" style="width:100%;padding-right:34px;" onkeydown="if(event.key==='Enter') validarPassword();">
+      <button type="button" id="btnTogglePass" onclick="togglePassword()" title="Mostrar/ocultar contraseña"
+        style="position:absolute;right:2px;top:2px;bottom:2px;background:none;border:none;cursor:pointer;font-size:15px;padding:0 6px;">👁</button>
+    </div>
+    <div style="margin-top:12px;"><button class="btn" onclick="validarPassword()">Entrar</button></div>
+    <div id="passError" style="color:#C0392B;font-size:12px;margin-top:8px;"></div>
+    <p style="font-size:10px;color:#888;margin-top:10px;">Todos los que entren con este mismo usuario ven y editan el mismo conteo en tiempo real. Usa la contraseña del personal de conteo o la de supervisor según tu rol.</p>
+  </div>
+</div>
+
+<header>
+  <h1>📦 Inventario Cíclico · Altipal</h1>
+  <div class="fila">
+    <button class="btn secundario" id="navCargar" onclick="mostrarVista('vistaCarga')">Cargar archivo</button>
+    <button class="btn rojo" id="navLimpiar" onclick="limpiarInformacion()">🗑 Limpiar información</button>
+    <button class="btn secundario" id="navCiclicos" onclick="mostrarVista('vistaCiclicos')">Cíclicos</button>
+    <button class="btn secundario" id="navDashboard" onclick="mostrarVista('vistaDashboard')">Dashboard / Exportar</button>
+    <button class="btn secundario" id="navDiferencias" onclick="abrirVistaDiferencias()">🔎 Diferencias (Supervisor)</button>
+    <button class="btn secundario" id="navKPI" onclick="mostrarVista('vistaKPI')">⏱ KPI Conteo</button>
+  </div>
+  <div class="fila">
+    <span id="estadoSync" style="font-size:11px;color:#EAF1FB;"></span>
+    <span id="estadoRol" style="font-size:11px;color:#EAF1FB;font-weight:bold;"></span>
+  </div>
+  <div class="fila" id="bannerSinConexion" style="display:none;background:#B45309;color:#fff;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:bold;">
+    📴 Sin conexión a internet — puedes seguir digitando con normalidad. Todo se está guardando en este dispositivo y se sincronizará solo en cuanto vuelva la señal.
+  </div>
+</header>
+
+<main>
+
+  <!-- ===================== CARGA ===================== -->
+  <section id="vistaCarga" class="card">
+    <h2>1. Cargar archivo de inventario (.xlsx)</h2>
+    <p style="font-size:12px;color:#666;">
+      Encabezados esperados: Fecha, Código de artículo, Nombre del producto, Factor, Tipo, Característica 1,
+      Característica 2, Sitio, Almacén, Número de lote, Ubicación, Id de pallet, Número de serie, Código de barras,
+      Cod. Barras caja, Número de variante, Proveedor, Nombre, DIGA, Disponible, Contado, Cantidad,
+      Precio de coste, Importe de coste, Código de disposición de lote, Estado de disposición de lote, Trabajador.
+    </p>
+    <div class="fila">
+      <input type="file" id="archivoInput" accept=".xlsx,.xls,.csv">
+      <button class="btn" onclick="cargarArchivo()">Cargar y segmentar</button>
+    </div>
+    <div id="estadoCarga" style="margin-top:10px;font-size:13px;"></div>
+    <p style="font-size:11px;color:#888;margin-top:10px;">Para limpiar toda la información cargada (y empezar un conteo nuevo) usa el botón "🗑 Limpiar información" del menú de arriba. Esa acción también pide la clave del supervisor.</p>
+  </section>
+
+  <!-- ===================== CÍCLICOS ===================== -->
+  <section id="vistaCiclicos" class="card oculto">
+    <h2>2. Cíclicos (Almacén + Ubicación + Nombre)</h2>
+    <div class="fila">
+      <select id="filtroAlmacen"><option value="">Todos los almacenes</option></select>
+      <select id="filtroUbicacion"><option value="">Todas las ubicaciones</option></select>
+      <select id="filtroNombre"><option value="">Todos los proveedores</option></select>
+      <button class="btn secundario" onclick="aplicarFiltros()">Filtrar</button>
+    </div>
+    <div id="listaCiclicos" style="margin-top:12px;"></div>
+  </section>
+
+  <!-- ===================== CONTEO ===================== -->
+  <section id="vistaConteo" class="card oculto">
+    <div class="fila" style="justify-content:space-between;">
+      <h2 id="tituloConteo">Conteo</h2>
+      <div class="fila">
+        <button class="btn rojo" id="btnResaltar" onclick="resaltarDiferencias()">Resaltar diferencias</button>
+        <button class="btn" id="btnMostrarDif" onclick="mostrarDiferencia()">👁 Mostrar diferencia (supervisor)</button>
+      </div>
+    </div>
+
+    <table class="cabecera-pdf">
+      <tr>
+        <td>DIAS FECHA CORTA</td><td class="val"><input type="number" id="hDiasFechaCorta" style="width:60px"></td>
+        <td>DIAS AVERIA</td><td class="val"><input type="number" id="hDiasAveria" style="width:60px" value="5"></td>
+        <td>DIGA</td><td class="val" id="hDiga"></td>
+        <td>CONTEO #1</td>
+        <td class="val">
+          <select id="hConteo1" style="min-width:160px;"></select>
+          <input type="text" id="hConteo1Otro" placeholder="Nombre" class="oculto" style="margin-left:4px;width:110px;">
+          <div style="margin-top:4px;font-size:10px;">
+            <span id="estadoTiempo1" style="color:#003C7E;font-weight:bold;"></span>
+            <button class="btn verde" id="btnIniciarTiempo1" onclick="iniciarConteoPersona(1)" style="padding:2px 6px;font-size:10px;">▶ Iniciar</button>
+            <button class="btn rojo oculto" id="btnFinalizarTiempo1" onclick="finalizarConteoPersona(1)" style="padding:2px 6px;font-size:10px;">⏹ Finalizar</button>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td>PROX FECHA CORTA</td><td class="val" id="hProxFechaCorta"></td>
+        <td>BUENA FECHA</td><td class="val" id="hBuenaFecha"></td>
+        <td>FECHA</td><td class="val" id="hFecha"></td>
+        <td>CONTEO #2</td>
+        <td class="val">
+          <select id="hConteo2" style="min-width:160px;"></select>
+          <input type="text" id="hConteo2Otro" placeholder="Nombre" class="oculto" style="margin-left:4px;width:110px;">
+          <div style="margin-top:4px;font-size:10px;">
+            <span id="estadoTiempo2" style="color:#003C7E;font-weight:bold;"></span>
+            <button class="btn verde" id="btnIniciarTiempo2" onclick="iniciarConteoPersona(2)" style="padding:2px 6px;font-size:10px;">▶ Iniciar</button>
+            <button class="btn rojo oculto" id="btnFinalizarTiempo2" onclick="finalizarConteoPersona(2)" style="padding:2px 6px;font-size:10px;">⏹ Finalizar</button>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td>CASA COMERCIAL</td><td class="val" id="hCasaComercial"></td>
+        <td>ALMACEN</td><td class="val" id="hAlmacen"></td>
+        <td>UBICACION</td><td class="val" id="hUbicacion"></td>
+        <td>CONTEO #3</td>
+        <td class="val">
+          <select id="hConteo3" style="min-width:160px;"></select>
+          <input type="text" id="hConteo3Otro" placeholder="Nombre" class="oculto" style="margin-left:4px;width:110px;">
+          <div style="margin-top:4px;font-size:10px;">
+            <span id="estadoTiempo3" style="color:#003C7E;font-weight:bold;"></span>
+            <button class="btn verde" id="btnIniciarTiempo3" onclick="iniciarConteoPersona(3)" style="padding:2px 6px;font-size:10px;">▶ Iniciar</button>
+            <button class="btn rojo oculto" id="btnFinalizarTiempo3" onclick="finalizarConteoPersona(3)" style="padding:2px 6px;font-size:10px;">⏹ Finalizar</button>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td>SUPERVISOR / COORDINADOR</td>
+        <td class="val" colspan="7"><input type="text" id="hSupervisor" placeholder="Supervisor / Coordinador" style="min-width:220px;"></td>
+      </tr>
+    </table>
+    <div id="avisoPolitica" style="font-size:11px;color:var(--azul-oscuro);margin:4px 0;font-weight:bold;"></div>
+
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--rojo)"></span> Avería (según días del proveedor)</span>
+      <span><span class="swatch" style="background:var(--amarillo)"></span> Corta fecha (según días del proveedor)</span>
+      <span><span class="swatch" style="background:var(--verde)"></span> Buena fecha</span>
+      <span><span class="swatch" style="outline:3px solid var(--diferencia)"></span> Diferencia Contado (resaltada, sin mostrar el valor)</span>
+    </div>
+    <p style="font-size:11px;color:#666;margin:4px 0 8px;">Los días de "fecha corta" y "avería" se cargan automáticamente por proveedor (política Altipal). "Resaltar diferencias" solo marca visualmente las filas que no cuadran, sin decir cuánto es la diferencia. Para ver el número exacto de la diferencia hay que usar "👁 Mostrar diferencia", que pide la clave del supervisor.</p>
+
+    <div class="fila" style="margin:8px 0;">
+      <input type="text" id="buscarProductoConteo" placeholder="🔎 Buscar por código, variante, nombre, cód. de barras o cód. de barras caja..."
+        style="min-width:340px;" oninput="pintarTablaConteo(ciclicos[ciclicoActualId])">
+      <span id="contadorBusquedaConteo" style="font-size:11px;color:#666;"></span>
+    </div>
+
+    <div class="tabla-scroll">
+      <table id="tablaConteo">
+        <thead><tr id="headConteo"></tr></thead>
+        <tbody id="bodyConteo"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== DASHBOARD / EXPORTAR ===================== -->
+  <section id="vistaDashboard" class="card oculto">
+    <h2>3. Dashboard y exportación final</h2>
+    <div id="resumenDashboard"></div>
+    <div class="fila" style="margin-top:14px;">
+      <button class="btn verde" onclick="exportarPDF()">📄 Generar PDF (dashboard + cíclicos) 🔒 supervisor</button>
+      <button class="btn verde" onclick="exportarPDFsPorCasaComercial()">📦 PDF separado por casa comercial (ZIP) 🔒 supervisor</button>
+      <button class="btn verde" onclick="exportarExcel()">📊 Generar Excel final</button>
+      <button class="btn verde" onclick="exportarExcelFechas()">📅 Reporte Excel de fechas y lotes</button>
+    </div>
+    <p style="font-size:11px;color:#888;margin-top:6px;">El PDF solo se puede descargar con la clave del supervisor. La opción "PDF separado por casa comercial" genera un archivo .zip con un PDF de "Reporte General" (dashboard + faltante/sobrante por proveedor + KPI de tiempos de conteo) y un PDF individual por cada cíclico, nombrado como "Casa comercial · Almacén · Ubicación.pdf".</p>
+    <div id="estadoExport" style="margin-top:10px;font-size:13px;"></div>
+  </section>
+
+  <!-- ===================== DIFERENCIAS (SOLO SUPERVISOR) ===================== -->
+  <section id="vistaDiferencias" class="card oculto">
+    <h2>🔎 Referencias con diferencia (acceso de supervisor)</h2>
+    <p style="font-size:12px;color:#666;">Muestra, por casa comercial (proveedor), qué referencias tienen diferencia entre lo contado y lo disponible en el sistema.</p>
+    <div class="fila" style="margin-bottom:8px;">
+      <input type="text" id="filtroCasaDif" placeholder="Buscar por casa comercial...">
+      <button class="btn secundario" onclick="pintarTablaDiferencias()">Buscar</button>
+    </div>
+    <div id="resumenDiferencias" style="font-size:12px;margin-bottom:8px;"></div>
+    <div class="tabla-scroll">
+      <table id="tablaDiferencias">
+        <thead><tr>
+          <th class="headTabla">Casa comercial</th>
+          <th class="headTabla">Almacén</th>
+          <th class="headTabla">Ubicación</th>
+          <th class="headTabla">Código de artículo</th>
+          <th class="headTabla">Nombre del producto</th>
+          <th class="headTabla">Disponible (sistema)</th>
+          <th class="headTabla">Contado</th>
+          <th class="headTabla">Diferencia (unid.)</th>
+          <th class="headTabla">Diferencia ($)</th>
+          <th class="headTabla">Validada por supervisor</th>
+        </tr></thead>
+        <tbody id="bodyDiferencias"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== KPI DE CONTEO (TIEMPOS) ===================== -->
+  <section id="vistaKPI" class="card oculto">
+    <h2>⏱ KPI de conteo (tiempos por persona y por cíclico)</h2>
+    <p style="font-size:12px;color:#666;">
+      Cada responsable (Conteo #1, #2 y #3) tiene botones ▶ Iniciar / ⏹ Finalizar en la pantalla de conteo de cada cíclico.
+      Aquí se resume cuánto se demoró cada persona, cuántos cíclicos contó, y cuánto duró el ciclo completo de cada referencia.
+    </p>
+    <h3 style="font-size:13px;color:var(--azul-oscuro);margin-bottom:6px;">Resumen por persona</h3>
+    <div id="resumenKPIPersonas"></div>
+
+    <h3 style="font-size:13px;color:var(--azul-oscuro);margin:16px 0 6px;">Detalle por cíclico</h3>
+    <div class="fila" style="margin-bottom:8px;">
+      <input type="text" id="filtroKPI" placeholder="Buscar por casa comercial, almacén o ubicación..." style="min-width:300px;" oninput="pintarKPI()">
+    </div>
+    <div class="tabla-scroll">
+      <table id="tablaKPI">
+        <thead><tr>
+          <th class="headTabla">Casa comercial</th>
+          <th class="headTabla">Almacén</th>
+          <th class="headTabla">Ubicación</th>
+          <th class="headTabla">Conteo #1</th>
+          <th class="headTabla">Conteo #2</th>
+          <th class="headTabla">Conteo #3</th>
+          <th class="headTabla">Duración total del ciclo</th>
+          <th class="headTabla">Estado</th>
+        </tr></thead>
+        <tbody id="bodyKPI"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- Contenedor oculto para renderizar cada cíclico al exportar a PDF -->
+<div id="pdfBuffer" style="position:fixed;left:-9999px;top:0;width:1100px;"></div>
+
+<script>
+const HEADERS = [
+  'Fecha','Código de artículo','Nombre del producto','Factor','Tipo','Característica 1','Característica 2',
+  'Sitio','Almacén','Número de lote','Ubicación','Id de pallet','Número de serie','Código de barras',
+  'Cod. Barras caja','Número de variante','Proveedor','Nombre','DIGA','Disponible','Contado','Cantidad',
+  'Precio de coste','Importe de coste','Código de disposición de lote','Estado de disposición de lote','Trabajador'
+];
+const NUM_REGISTROS = 10;
+const REGISTRO_LABELS = ['PICKING','PICKING2','ALTURA1','ALTURA2','ALTURA3','ALTURA4','ALTURA5','ALTURA6','ALTURA7','ALTURA8'];
+const SUPERVISOR_PASS = 'ALTIPAL_SUP*'; // clave del supervisor para validar diferencias (cámbiala aquí si lo necesitas)
+
+// Pide la clave del supervisor para una acción puntual (cargar archivo, limpiar info, exportar PDF, etc.).
+// Si ya se inició sesión como supervisor (rolActual==='supervisor'), no vuelve a pedirla.
+async function requiereClaveSupervisor(mensaje){
+  if(rolActual === 'supervisor') return true;
+  const clave = prompt(mensaje);
+  if(clave === null) return false; // canceló
+  if(clave !== SUPERVISOR_PASS){
+    alert('Clave incorrecta. Solo el supervisor/coordinador puede realizar esta acción.');
+    return false;
+  }
+  return true;
+}
+
+const FECHA_CORTA_PROVEEDORES = {
+  "ABBOTT LABORATORIES DE COLOMBIA S A S": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "ABURRA LTDA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "ADMINISTRACION DE RECURSOS Y OPORTUNIDADES S.A.": {
+    "buenaACorta": 20,
+    "cortaAAveria": 5
+  },
+  "AGRICOLA HIMALAYA S.A.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 90
+  },
+  "ALPINA PRODUCTOS ALIMENTICIOS S.A": {
+    "buenaACorta": 20,
+    "cortaAAveria": 4
+  },
+  "AZUL -K": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "BIC": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "BRINSA S.A.": {
+    "buenaACorta": 15,
+    "cortaAAveria": 4
+  },
+  "BELLEZA EXPRESS S.A.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 15
+  },
+  "CHOCOLADEFABRIKEN LINDT": {
+    "buenaACorta": 90,
+    "cortaAAveria": 5
+  },
+  "COLGATE PALMOLIVE COMPAÑÍA S.A.": {
+    "buenaACorta": 20,
+    "cortaAAveria": 10
+  },
+  "COLOMA LTDA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "COLOMBO ESPAÑOLA DE CONSERVAS LTDA.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 20
+  },
+  "COMESTIBLES ALDOR S.A.S": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "COMESTIBLES ITALO S.A": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "COMPAÑÍA NACIONAL DE LEVADURAS LEVAPAN S.A.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "DETERGENTES LTDA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "DIANA CORPORACION S.A.S": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "DIAGEO COLOMBIA S.A.": {
+    "buenaACorta": 60,
+    "cortaAAveria": 5
+  },
+  "PARALLEL 42 VENTURES S DE RL DE CV": {
+    "buenaACorta": 60,
+    "cortaAAveria": 5
+  },
+  "DISTRIBUIDORA DE VINOS Y LICORES S.A.S": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "ENALIA": {
+    "buenaACorta": 60,
+    "cortaAAveria": 5
+  },
+  "FEDERAL S.A.S.": {
+    "buenaACorta": 20,
+    "cortaAAveria": 8
+  },
+  "GASEOSAS LUX S.A.S.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "GLAXOSMITHKLINE CONSUMERHEALTHCARE COLOMBIA SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "GLOBAL WINE & SPIRITS LTDA": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "GRUPO ALIMENTARIO DEL ATLANTICO": {
+    "buenaACorta": 90,
+    "cortaAAveria": 20
+  },
+  "HARINERA DEL VALLE": {
+    "buenaACorta": 15,
+    "cortaAAveria": 4
+  },
+  "INCUBADORA SANTANDER S A": {
+    "buenaACorta": 15,
+    "cortaAAveria": 4
+  },
+  "INDUSTRIA NACIONAL DE GASEOSAS": {
+    "buenaACorta": 15,
+    "cortaAAveria": 5
+  },
+  "INDUSTRIAS FROTEX S.A.S.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "INDUSTRIAS PATOJITO SAS": {
+    "buenaACorta": 20,
+    "cortaAAveria": 5
+  },
+  "KENVUE COLOMBIA S.A.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "KELLANOVA COLOMBIA S.A.S.": {
+    "buenaACorta": 60,
+    "cortaAAveria": 10
+  },
+  "LOREAL": {
+    "buenaACorta": 60,
+    "cortaAAveria": 15
+  },
+  "GRUPO INFESA - KANU": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "KIMBERLY": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "MAHOU S.A.": {
+    "buenaACorta": 60,
+    "cortaAAveria": 5
+  },
+  "MANITOBA S.A.S.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "MASTERFOODS COLOMBIA LTDA-EFFEM COLOMBIA LTDA": {
+    "buenaACorta": 90,
+    "cortaAAveria": 10
+  },
+  "MAYAGUEZ S. A.": {
+    "buenaACorta": 0,
+    "cortaAAveria": 0
+  },
+  "MEAD JOHNSON NUTRITION COLOMBIA LTDA": {
+    "buenaACorta": 90,
+    "cortaAAveria": 30
+  },
+  "NESTLE DE COLOMBIA S.A.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 15
+  },
+  "COMERCIAL+BIOS. - FRIKO": {
+    "buenaACorta": 90,
+    "cortaAAveria": 15
+  },
+  "ORF S.A": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "PANDURATA": {
+    "buenaACorta": 75,
+    "cortaAAveria": 5
+  },
+  "PAPELES NACIONALES S.A.": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "SOFTYS COLOMBIA S.A": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "LACTALIS COLOMBIA LTDA": {
+    "buenaACorta": 45,
+    "cortaAAveria": 15
+  },
+  "PDC VINOS Y LICORES SAS": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "COMPAÑÍA COLOMBIANA DE TABACO": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "PLASTICOS FARALLONES S.A.": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "PRODUCTOS FAMILIA S.A": {
+    "buenaACorta": 60,
+    "cortaAAveria": 20
+  },
+  "PRODUCTOS NATURALES DE LA SABANA S A S - ALQUERIA": {
+    "buenaACorta": 15,
+    "cortaAAveria": 6
+  },
+  "PROMOTORA DE CAFE COLOMBIA SA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "RB (HEALTH) COLOMBIA S.A.S.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 30
+  },
+  "RECKITT BENCKISER COLOMBIA S.A.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "REPRESENTACIONES CONTINENTAL SAS": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "S.C. JOHNSON & JOHNSON COLOMBIA S.A.": {
+    "buenaACorta": 90,
+    "cortaAAveria": 15
+  },
+  "SANOFI - AVENTIS DE COLOMBIA S.A.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "SHELL MARKETS LIMITED": {
+    "buenaACorta": 26,
+    "cortaAAveria": 4,
+    "fechaEsFabricacion": true,
+    "vidaUtilAnios": 4
+  },
+  "SIGNIFY COLOMBIANA S.A.S": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "SUPER DE ALIMENTOS S.A.S": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "SUSANITA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "UHU GMBH": {
+    "buenaACorta": 90,
+    "cortaAAveria": 30
+  },
+  "UNILEVER": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "UPFIELD COLOMBIA S.A.S.": {
+    "buenaACorta": 60,
+    "cortaAAveria": 15
+  },
+  "ARROCERA LA ESMERALDA SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "ASAHI SUPERBRAND": {
+    "buenaACorta": 60,
+    "cortaAAveria": 5
+  },
+  "CARVAJAL S.A.S": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "COSMETICOS SAMY SA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "EDGEWELL PERSONAL CARE COLOMBIA SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "ENERGIZER": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "FITMIX SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "GENOMMA LAB COLOMBIA LTDA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "HENKEL": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "INDUCOAL": {
+    "buenaACorta": 20,
+    "cortaAAveria": 5
+  },
+  "INDUSTRIA DE ALIMENTOS PARA DIETAS ESPECIALES SAS (VITAD)": {
+    "buenaACorta": 40,
+    "cortaAAveria": 10
+  },
+  "MOLINOS DEL ATLANTICO S.A.S.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "OCEAN SPRAY": {
+    "buenaACorta": 90,
+    "cortaAAveria": 5
+  },
+  "PACIFIC PRODUCTS S.A.S.": {
+    "buenaACorta": 20,
+    "cortaAAveria": 5
+  },
+  "PROCESADOS LHM SOCIEDAD POR ACCIONES SIMPLIFICADA (BADIA)": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "PRONATUCOL": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "SUMINISTROS DE OFICINA JX LTDA": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "SUMINISTROS INTEGRALES SAS EN REORGANIZACION": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "TEAM FOODS COLOMBIA S.A.": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "TEYUNA FOODS SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 8
+  },
+  "SOBERANA SAS": {
+    "buenaACorta": 90,
+    "cortaAAveria": 15
+  },
+  "KOPPS COMMERCIAL SAS": {
+    "buenaACorta": 60,
+    "cortaAAveria": 30
+  },
+  "TEQUILA ORENDAIN DE JALISCO S.A. DE C.V.": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "LICORES ARTESANALES SAS": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "LOS GEMELOS DE LA 44 S.A.S.": {
+    "buenaACorta": 60,
+    "cortaAAveria": 15
+  },
+  "BGO DISTRIBUIDOR S.A.S": {
+    "buenaACorta": 60,
+    "cortaAAveria": 15
+  },
+  "WILLIAM GRANT & SONS COLOMBIA S.A.S.": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "ENTRECANALES DOMECQ E HIJOS S.A": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "EMPRESA DE LICORES DE CUNDINAMARCA": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "VIÑA LUIS FELIPE EDWARDS LTDA": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "3M": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "NISSIN FOODS DO BRASIL LTDA": {
+    "buenaACorta": 30,
+    "cortaAAveria": 5
+  },
+  "MULTIDIMENSIONALES S.A.S - TEKNIPLEX": {
+    "buenaACorta": null,
+    "cortaAAveria": null
+  },
+  "LOK FOODS SAS": {
+    "buenaACorta": 90,
+    "cortaAAveria": 30
+  },
+  "MONDELEZ COLOMBIA SAS": {
+    "buenaACorta": 30,
+    "cortaAAveria": 15
+  }
+};
+
+
+let rawRows = [];         // filas originales del excel (objetos por encabezado)
+let ciclicos = {};         // id -> { almacen, ubicacion, nombre, filas:[...], conteos: {codigo: [7 valores]}, header:{...} }
+let ciclicoActualId = null;
+
+/* =================================================================
+   SINCRONIZACIÓN EN TIEMPO REAL (Firebase Firestore)
+   -----------------------------------------------------------------
+   1) Crea un proyecto gratis en https://console.firebase.google.com
+   2) Activa "Firestore Database" (modo producción) y pega abajo
+      la configuración que te da Firebase (Configuración del proyecto
+      → tus apps → SDK de Firebase).
+   3) En Firestore, configura reglas para que solo se pueda leer y
+      escribir dentro de "sesiones" (ver nota de seguridad al final
+      de este bloque).
+   ================================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyBjWHuM16pFIEVlK4VPS9o22IF-iF-RLyo",
+  authDomain: "ciclcios.firebaseapp.com",
+  projectId: "ciclcios",
+  storageBucket: "ciclcios.firebasestorage.app",
+  messagingSenderId: "14223594705",
+  appId: "1:14223594705:web:caaafc4d182ba4737821f0"
+};
+
+// Si la lista está vacía, cualquier correo puede entrar (con la contraseña).
+// Si agregas correos aquí, SOLO esos correos podrán entrar.
+const CORREOS_PERMITIDOS = [
+  // "juan.perez@altipal.com",
+  // "maria.gomez@altipal.com",
+];
+
+let firebaseApp = null;
+let db = null;
+let sesionId = null;
+let usuarioActual = null; // usuario que inició sesión en este dispositivo
+let unsubscribeCiclicos = null;
+let sincronizando = false; // evita eco al recibir tu propio cambio recién escrito
+
+/* =================================================================
+   TRABAJO SIN INTERNET (offline) Y RESPALDO LOCAL
+   -----------------------------------------------------------------
+   Idea: si la señal se cae o está débil, nadie debe perder lo que ya
+   digitó. Para eso hay DOS capas de seguridad que trabajan juntas:
+
+   1) Persistencia offline de Firestore: los cambios que se guardan
+      sin internet quedan en una caché local del navegador (IndexedDB)
+      y Firestore los sube solo, automáticamente, en cuanto vuelve la
+      conexión — sin que nadie tenga que hacer nada.
+   2) Respaldo local extra (localStorage): una segunda copia de
+      seguridad de todo el trabajo, por si el navegador no soporta la
+      caché de Firestore (modo incógnito, navegador muy viejo, etc.)
+      o si la pestaña se cierra antes de que la sincronización con la
+      nube alcance a completarse.
+   ================================================================= */
+const CLAVE_RESPALDO_LOCAL = 'ciclicos_altipal_respaldo';
+let respaldoLocalTimer = null;
+
+function guardarRespaldoLocal(){
+  clearTimeout(respaldoLocalTimer);
+  respaldoLocalTimer = setTimeout(()=>{
+    try{
+      localStorage.setItem(CLAVE_RESPALDO_LOCAL, JSON.stringify({
+        sesionId, usuarioActual, ciclicos, guardadoEn: new Date().toISOString()
+      }));
+    }catch(err){ console.warn('No se pudo guardar el respaldo local:', err); }
+  }, 400); // pequeña pausa para no escribir en cada tecla, sin perder nada relevante
+}
+
+function guardarRespaldoLocalInmediato(){
+  clearTimeout(respaldoLocalTimer);
+  try{
+    localStorage.setItem(CLAVE_RESPALDO_LOCAL, JSON.stringify({
+      sesionId, usuarioActual, ciclicos, guardadoEn: new Date().toISOString()
+    }));
+  }catch(err){ console.warn('No se pudo guardar el respaldo local:', err); }
+}
+
+// Si al iniciar sesión Firestore todavía no ha traído nada (por ejemplo, se abrió
+// la app estando sin internet), esto recupera el último respaldo guardado en este
+// mismo dispositivo para que el trabajo nunca aparezca en blanco.
+function restaurarRespaldoLocalSiAplica(){
+  try{
+    const crudo = localStorage.getItem(CLAVE_RESPALDO_LOCAL);
+    if(!crudo) return;
+    const respaldo = JSON.parse(crudo);
+    if(!respaldo || !respaldo.ciclicos || respaldo.sesionId !== sesionId) return;
+    if(Object.keys(ciclicos).length) return; // ya hay datos en memoria, no se sobreescribe
+    if(!Object.keys(respaldo.ciclicos).length) return;
+
+    ciclicos = respaldo.ciclicos;
+    llenarFiltros();
+    renderListaCiclicos(Object.values(ciclicos));
+    document.getElementById('estadoSync').innerText =
+      '♻ Se restauró el trabajo guardado en este dispositivo (' + new Date(respaldo.guardadoEn).toLocaleString('es-CO') + '). Verificando con la nube...';
+  }catch(err){ console.warn('No se pudo restaurar el respaldo local:', err); }
+}
+
+// Muestra/oculta el aviso de "sin conexión" y actualiza el texto de estado.
+function actualizarEstadoConexion(){
+  const banner = document.getElementById('bannerSinConexion');
+  if(banner) banner.style.display = navigator.onLine ? 'none' : 'flex';
+  if(!navigator.onLine){
+    document.getElementById('estadoSync').innerText =
+      '📴 Sin conexión — trabajando localmente, se sincronizará solo cuando vuelva el internet.';
+  } else if(firebaseListo() && db){
+    document.getElementById('estadoSync').innerText = `🔄 Sesión: ${sesionId} · Conectado como ${usuarioActual}`;
+  }
+}
+
+window.addEventListener('online', actualizarEstadoConexion);
+window.addEventListener('offline', actualizarEstadoConexion);
+// Si se cierra o recarga la pestaña, se fuerza a guardar el respaldo ya mismo
+// (sin esperar la pequeña pausa de guardarRespaldoLocal) para no perder nada.
+window.addEventListener('beforeunload', guardarRespaldoLocalInmediato);
+
+function firebaseListo(){
+  return firebaseConfig.apiKey && firebaseConfig.apiKey !== 'TU_API_KEY';
+}
+
+function idDoc(id){
+  // Firestore no permite "/" en el id del documento
+  return String(id).replace(/\//g, '__');
+}
+
+// Convierte los Timestamp de Firestore de vuelta a Date de JS (para que
+// las columnas de fecha sigan funcionando igual que con el Excel original).
+function normalizarFechasFila(fila){
+  if(fila && fila['Fecha'] && typeof fila['Fecha'].toDate === 'function'){
+    fila['Fecha'] = fila['Fecha'].toDate();
+  }
+  return fila;
+}
+
+function iniciarSincronizacion(){
+  if(!firebaseListo()){
+    document.getElementById('estadoSync').innerText = '⚠ Sincronización no configurada (modo local, un solo dispositivo).';
+    return;
+  }
+  if(!firebaseApp){
+    firebaseApp = firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    // Habilita la caché offline de Firestore: si la señal se cae, todo lo que se
+    // digite queda guardado en este dispositivo (IndexedDB) y se sube solo, en
+    // orden, en cuanto vuelva la conexión. No hay que hacer nada manualmente.
+    db.enablePersistence({synchronizeTabs:true}).catch(err=>{
+      if(err.code === 'failed-precondition'){
+        console.warn('Persistencia offline no disponible: hay otra pestaña de esta app abierta.');
+      } else if(err.code === 'unimplemented'){
+        console.warn('Este navegador no soporta almacenamiento offline de Firestore; se usará solo el respaldo local.');
+      }
+    });
+  }
+  actualizarEstadoConexion();
+
+  if(unsubscribeCiclicos) unsubscribeCiclicos();
+  unsubscribeCiclicos = db.collection('sesiones').doc(sesionId).collection('ciclicos')
+    .onSnapshot({includeMetadataChanges:true}, snapshot=>{
+      sincronizando = true;
+      snapshot.docChanges().forEach(change=>{
+        const data = change.doc.data();
+        if(change.type === 'removed'){ delete ciclicos[change.doc.id]; return; }
+        if(data && Array.isArray(data.filas)) data.filas.forEach(normalizarFechasFila);
+        ciclicos[change.doc.id] = data;
+      });
+      sincronizando = false;
+      guardarRespaldoLocal(); // mantiene el respaldo local al día con lo que llega de la nube
+
+      // Refresca lo que se esté viendo en pantalla en este momento
+      if(!document.getElementById('vistaCiclicos').classList.contains('oculto')){
+        llenarFiltros();
+        renderListaCiclicos(Object.values(ciclicos));
+      }
+      if(ciclicoActualId && ciclicos[ciclicoActualId] && !document.getElementById('vistaConteo').classList.contains('oculto')){
+        pintarTablaConteo(ciclicos[ciclicoActualId]);
+        actualizarBotonResaltar(ciclicos[ciclicoActualId]);
+        asegurarTiempos(ciclicos[ciclicoActualId]);
+        [1,2,3].forEach(actualizarEstadoTiempo);
+      }
+      if(!document.getElementById('vistaDashboard').classList.contains('oculto')) pintarDashboard();
+      if(!document.getElementById('vistaDiferencias').classList.contains('oculto')) pintarTablaDiferencias();
+      if(!document.getElementById('vistaKPI').classList.contains('oculto')) pintarKPI();
+
+      // Estado visible de sincronización, incluyendo cambios que quedaron
+      // pendientes de subir (por ejemplo, mientras la red estuvo débil o caída).
+      if(!navigator.onLine){
+        document.getElementById('estadoSync').innerText =
+          '📴 Sin conexión — trabajando localmente, se sincronizará solo cuando vuelva el internet.';
+      } else if(snapshot.metadata.hasPendingWrites){
+        document.getElementById('estadoSync').innerText = '🔄 Sincronizando cambios pendientes con la nube...';
+      } else {
+        document.getElementById('estadoSync').innerText = `✅ Sincronizado · Sesión: ${sesionId} · Usuario: ${usuarioActual}`;
+      }
+    }, err=>{
+      document.getElementById('estadoSync').innerText = '⚠ Error de sincronización: ' + err.message;
+    });
+}
+
+// Sube (o actualiza) un cíclico completo en la nube. Se llama cada vez
+// que alguien cambia un dato de ese cíclico (conteo, fecha, lote, etc.)
+function guardarCiclicoEnNube(c){
+  guardarRespaldoLocal(); // primero queda en este dispositivo, pase lo que pase con la red
+  if(!firebaseListo() || !db || sincronizando) return;
+  c._ultimoEditor = usuarioActual || '';
+  c._ultimaEdicion = new Date().toISOString();
+  db.collection('sesiones').doc(sesionId).collection('ciclicos').doc(idDoc(c.id))
+    .set(c, {merge:true})
+    .catch(err=> console.error('Error guardando en la nube:', err));
+}
+
+function subirTodosLosCiclicosANube(){
+  guardarRespaldoLocalInmediato();
+  if(!firebaseListo() || !db) return;
+  const batch = db.batch();
+  Object.values(ciclicos).forEach(c=>{
+    const ref = db.collection('sesiones').doc(sesionId).collection('ciclicos').doc(idDoc(c.id));
+    batch.set(ref, c, {merge:true});
+  });
+  batch.commit().catch(err=> console.error('Error subiendo cíclicos a la nube:', err));
+}
+
+/* ---------------- LOGIN ---------------- */
+const USUARIO_FIJO = 'BARRANQUILLA';
+const CLAVE_PERSONAL = 'ALTIPAL*';     // acceso del personal que realiza los cíclicos (solo módulo de Cíclicos)
+const CLAVE_SUPERVISOR_LOGIN = 'ALTIPAL_SUP*'; // acceso de supervisores (todos los módulos, sin pedir clave adicional)
+
+let rolActual = null; // 'personal' | 'supervisor'
+
+function validarPassword(){
+  const usuario = document.getElementById('usuarioInput').value.trim().toUpperCase();
+  const val = document.getElementById('passInput').value;
+
+  if(usuario !== USUARIO_FIJO){
+    document.getElementById('passError').innerText = 'Usuario o contraseña incorrectos.';
+    return;
+  }
+
+  if(val === CLAVE_SUPERVISOR_LOGIN){
+    rolActual = 'supervisor';
+  } else if(val === CLAVE_PERSONAL){
+    rolActual = 'personal';
+  } else {
+    document.getElementById('passError').innerText = 'Usuario o contraseña incorrectos.';
+    return;
+  }
+
+  usuarioActual = USUARIO_FIJO;
+  sesionId = USUARIO_FIJO; // todos los que entran con este usuario comparten el mismo archivo/sesión
+  document.getElementById('loginOverlay').style.display = 'none';
+  aplicarPermisosRol();
+  restaurarRespaldoLocalSiAplica();
+  iniciarSincronizacion();
+}
+
+// El personal que realiza los cíclicos solo ve/edita el módulo de Cíclicos (lista + conteo).
+// Los supervisores ven todos los módulos y, además, ya no necesitan volver a digitar la
+// clave del supervisor en las acciones que la piden (cargar archivo, limpiar información,
+// mostrar diferencia, ver diferencias, exportar PDF), porque ya quedaron autenticados como tal al entrar.
+function aplicarPermisosRol(){
+  const soloCiclico = rolActual !== 'supervisor';
+  ['navCargar','navLimpiar','navDashboard','navDiferencias','navKPI'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.classList.toggle('oculto', soloCiclico);
+  });
+  document.getElementById('estadoRol').innerText = rolActual === 'supervisor'
+    ? '👤 Supervisor (acceso completo)'
+    : '👤 Personal de conteo (módulo Cíclicos)';
+  mostrarVista(soloCiclico ? 'vistaCiclicos' : 'vistaCarga');
+}
+
+/* ---------------- LIMPIAR INFORMACIÓN ---------------- */
+async function limpiarInformacion(){
+  if(!Object.keys(ciclicos).length && !rawRows.length){
+    alert('No hay información cargada para limpiar.');
+    return;
+  }
+  if(!(await requiereClaveSupervisor('Clave del supervisor para limpiar toda la información cargada:'))) return;
+  if(!confirm('Esto borrará TODOS los cíclicos y conteos cargados (en este dispositivo y, si hay sincronización, en la nube). ¿Continuar?')) return;
+
+  const idsAntiguos = Object.keys(ciclicos);
+
+  rawRows = [];
+  ciclicos = {};
+  ciclicoActualId = null;
+  accesoDiferenciasValidado = false;
+
+  document.getElementById('estadoCarga').innerText = 'Información limpiada. Carga un nuevo archivo cuando quieras.';
+  document.getElementById('archivoInput').value = '';
+  llenarFiltros();
+  renderListaCiclicos([]);
+  mostrarVista('vistaCarga');
+  try{ localStorage.removeItem(CLAVE_RESPALDO_LOCAL); }catch(e){}
+
+  // Si hay sincronización en la nube, borra también los documentos existentes.
+  if(firebaseListo() && db && idsAntiguos.length){
+    const batch = db.batch();
+    idsAntiguos.forEach(id=>{
+      const ref = db.collection('sesiones').doc(sesionId).collection('ciclicos').doc(idDoc(id));
+      batch.delete(ref);
+    });
+    batch.commit().catch(err=> console.error('Error limpiando la nube:', err));
+  }
+}
+
+/* ---------------- NAV ---------------- */
+function mostrarVista(id){
+  ['vistaCarga','vistaCiclicos','vistaConteo','vistaDashboard','vistaDiferencias','vistaKPI'].forEach(v=>{
+    document.getElementById(v).classList.toggle('oculto', v!==id);
+  });
+  if(id==='vistaDashboard') pintarDashboard();
+  if(id==='vistaCiclicos'){ llenarFiltros(); renderListaCiclicos(Object.values(ciclicos)); }
+  if(id==='vistaKPI') pintarKPI();
+}
+
+/* ---------------- MOSTRAR/OCULTAR CONTRASEÑA (LOGIN) ---------------- */
+function togglePassword(){
+  const input = document.getElementById('passInput');
+  const btn = document.getElementById('btnTogglePass');
+  if(!input || !btn) return;
+  if(input.type === 'password'){
+    input.type = 'text';
+    btn.innerText = '🙈';
+  } else {
+    input.type = 'password';
+    btn.innerText = '👁';
+  }
+}
+
+/* ---------------- CARGA Y SEGMENTACIÓN ---------------- */
+async function cargarArchivo(){
+  const input = document.getElementById('archivoInput');
+  const file = input.files[0];
+  if(!file){ alert('Selecciona un archivo primero.'); return; }
+
+  if(!(await requiereClaveSupervisor('Clave del supervisor para subir el archivo de inventario:'))) return;
+
+  document.getElementById('estadoCarga').innerText = 'Procesando archivo...';
+
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const wb = XLSX.read(e.target.result, {type:'binary', cellDates:true});
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(sheet, {defval:''});
+    rawRows = json;
+    segmentarCiclicos();
+    document.getElementById('estadoCarga').innerText =
+      `Cargado: ${rawRows.length} filas → ${Object.keys(ciclicos).length} cíclicos generados.` +
+      (firebaseListo() ? ' Subiendo a la sesión compartida...' : '');
+    llenarFiltros();
+    mostrarVista('vistaCiclicos');
+    renderListaCiclicos(Object.values(ciclicos));
+    subirTodosLosCiclicosANube();
+  };
+  reader.readAsBinaryString(file);
+}
+
+function buscarFechaCorta(nombre, proveedor){
+  const claves = [nombre, proveedor].map(v=>String(v||'').trim().toUpperCase()).filter(Boolean);
+  for(const clave of claves){
+    if(FECHA_CORTA_PROVEEDORES[clave]) return FECHA_CORTA_PROVEEDORES[clave];
+  }
+  return null;
+}
+
+function segmentarCiclicos(){
+  ciclicos = {};
+  rawRows.forEach(row=>{
+    const almacen = row['Almacén'];
+    const ubicacion = row['Ubicación'];
+    const nombre = row['Nombre'];
+    if(!almacen && !ubicacion && !nombre) return;
+    const id = [nombre, almacen, ubicacion].map(v=>String(v||'').trim()).join('||');
+    if(!ciclicos[id]){
+      const politica = buscarFechaCorta(nombre, row['Proveedor']);
+      ciclicos[id] = {
+        id, almacen, ubicacion, nombre, filas:[],
+        header:{
+          diasFechaCorta: politica && politica.buenaACorta!=null ? politica.buenaACorta : '',
+          diasAveria: politica && politica.cortaAAveria!=null ? politica.cortaAAveria : 5,
+          fechaEsFabricacion: !!(politica && politica.fechaEsFabricacion),
+          vidaUtilAnios: politica && politica.vidaUtilAnios!=null ? politica.vidaUtilAnios : null,
+          diga: row['DIGA']||'',
+          conteo1:'', conteo2:'', conteo3:'', supervisor:''
+        },
+        tiempos: { 1: crearTiempoVacio(), 2: crearTiempoVacio(), 3: crearTiempoVacio() }
+      };
+    }
+    ciclicos[id].filas.push(row);
+  });
+}
+
+function llenarFiltros(){
+  const almacenes = [...new Set(Object.values(ciclicos).map(c=>c.almacen))].sort();
+  const ubicaciones = [...new Set(Object.values(ciclicos).map(c=>c.ubicacion))].sort();
+  const nombres = [...new Set(Object.values(ciclicos).map(c=>c.nombre))].sort();
+  const sel = (id, arr)=>{
+    const el = document.getElementById(id);
+    el.innerHTML = `<option value="">Todos</option>` + arr.map(v=>`<option value="${v}">${v}</option>`).join('');
+  };
+  sel('filtroAlmacen', almacenes);
+  sel('filtroUbicacion', ubicaciones);
+  sel('filtroNombre', nombres);
+}
+
+function aplicarFiltros(){
+  const a = document.getElementById('filtroAlmacen').value;
+  const u = document.getElementById('filtroUbicacion').value;
+  const n = document.getElementById('filtroNombre').value;
+  const filtrados = Object.values(ciclicos).filter(c=>
+    (!a || String(c.almacen)===a) && (!u || String(c.ubicacion)===u) && (!n || String(c.nombre)===n)
+  );
+  renderListaCiclicos(filtrados);
+}
+
+function renderListaCiclicos(lista){
+  const cont = document.getElementById('listaCiclicos');
+  if(!lista.length){ cont.innerHTML = '<p>No hay cíclicos con ese filtro.</p>'; return; }
+  cont.innerHTML = lista.map(c=>`
+    <div class="ciclico-item" onclick="abrirConteo('${c.id.replace(/'/g,"\\'")}')">
+      <b>${c.nombre}</b><br>
+      <small>Almacén: ${c.almacen} · Ubicación: ${c.ubicacion} · ${c.filas.length} referencias</small>
+    </div>`).join('');
+}
+
+/* ---------------- CONTEO ---------------- */
+// Lista de personas para CONTEO #1, #2 y #3 (mismo listado, con "Otros...")
+const RESPONSABLES_LISTA = [
+  'PEREZ MENDOZA JOSIMAR JOSE',
+  'ACEVEDO DONADO LUIS JACINTO',
+  'DE LA HOZ MARTINEZ JESUS DAVID',
+  'REYES LOBO MARLON RAFAEL',
+  'VARGAS PEREZ WILSON ALBERTO',
+  'CARMONA CAMPO JULIO CESAR',
+  'PACHECO PADILLA JOSE LUIS',
+  'ACERO PABON HECTOR NAHAIDER',
+  'CRUZ APARICIO RONNY JOHAN',
+  'BALMACEDA PEDROZO LUIS FERNANDO'
+];
+
+function poblarSelectsPersonas(){
+  const opcionesHTML = '<option value="">-- Selecciona --</option>' +
+    RESPONSABLES_LISTA.map(n=>`<option>${n}</option>`).join('') +
+    '<option value="OTROS">Otros...</option>';
+  ['hConteo1','hConteo2','hConteo3'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = opcionesHTML;
+  });
+}
+poblarSelectsPersonas();
+
+// Conecta un <select> + su input "Otro" con el valor guardado, mostrando el
+// campo de texto cuando la persona no está en la lista o eligió "Otros...".
+function configurarPersonaSelect(selectId, otroId, valorActual, onCambiar){
+  const sel = document.getElementById(selectId);
+  const inputOtro = document.getElementById(otroId);
+  if(valorActual && RESPONSABLES_LISTA.includes(valorActual)){
+    sel.value = valorActual;
+    inputOtro.classList.add('oculto');
+    inputOtro.value = '';
+  } else if(valorActual){
+    sel.value = 'OTROS';
+    inputOtro.classList.remove('oculto');
+    inputOtro.value = valorActual;
+  } else {
+    sel.value = '';
+    inputOtro.classList.add('oculto');
+    inputOtro.value = '';
+  }
+  sel.onchange = ()=>{
+    if(sel.value === 'OTROS'){
+      inputOtro.classList.remove('oculto');
+      inputOtro.value = '';
+      inputOtro.focus();
+      onCambiar('');
+    } else {
+      inputOtro.classList.add('oculto');
+      inputOtro.value = '';
+      onCambiar(sel.value);
+    }
+  };
+  inputOtro.onchange = ()=>{ onCambiar(inputOtro.value); };
+}
+
+function abrirConteo(id){
+  ciclicoActualId = id;
+  const c = ciclicos[id];
+  mostrarVista('vistaConteo');
+  document.getElementById('tituloConteo').innerText = `${c.nombre} · Almacén ${c.almacen} · Ubicación ${c.ubicacion}`;
+
+  document.getElementById('hDiasFechaCorta').value = c.header.diasFechaCorta;
+  document.getElementById('hDiasAveria').value = c.header.diasAveria;
+  document.getElementById('hDiga').innerText = c.header.diga;
+  document.getElementById('hSupervisor').value = c.header.supervisor;
+  document.getElementById('hCasaComercial').innerText = c.nombre;
+  document.getElementById('hAlmacen').innerText = c.almacen;
+  document.getElementById('hUbicacion').innerText = c.ubicacion;
+  document.getElementById('hFecha').innerText = new Date().toLocaleDateString('es-CO');
+  document.getElementById('hProxFechaCorta').innerText = '';
+  document.getElementById('hBuenaFecha').innerText = '';
+  document.getElementById('buscarProductoConteo').value = '';
+  document.getElementById('contadorBusquedaConteo').innerText = '';
+
+  const politica = buscarFechaCorta(c.nombre);
+  document.getElementById('avisoPolitica').innerText = politica
+    ? '✔ Días cargados automáticamente según la política Altipal de este proveedor.'
+    : '⚠ Proveedor sin política de fecha corta registrada — verifica/ajusta los días manualmente.';
+
+  configurarPersonaSelect('hConteo1', 'hConteo1Otro', c.header.conteo1, v=>{
+    c.header.conteo1 = v; guardarCiclicoEnNube(c);
+  });
+  configurarPersonaSelect('hConteo2', 'hConteo2Otro', c.header.conteo2, v=>{
+    c.header.conteo2 = v; guardarCiclicoEnNube(c);
+  });
+  configurarPersonaSelect('hConteo3', 'hConteo3Otro', c.header.conteo3, v=>{
+    c.header.conteo3 = v; guardarCiclicoEnNube(c);
+  });
+
+  ['hDiasFechaCorta','hDiasAveria','hSupervisor'].forEach(id2=>{
+    document.getElementById(id2).onchange = ()=>{
+      c.header.diasFechaCorta = document.getElementById('hDiasFechaCorta').value;
+      c.header.diasAveria = document.getElementById('hDiasAveria').value;
+      c.header.supervisor = document.getElementById('hSupervisor').value;
+      pintarTablaConteo(c);
+      guardarCiclicoEnNube(c);
+    };
+  });
+
+  asegurarTiempos(c);
+  [1,2,3].forEach(actualizarEstadoTiempo);
+
+  pintarTablaConteo(c);
+  actualizarBotonResaltar(c);
+}
+
+function claseFecha(fechaVal, diasAveria, diasFechaCorta, fechaEsFabricacion, vidaUtilAnios){
+  if(!fechaVal) return '';
+  const fecha = fechaVal instanceof Date ? fechaVal : new Date(fechaVal);
+  if(isNaN(fecha)) return '';
+  // Si la fecha digitada es de FABRICACIÓN (no de vencimiento), se le suma la vida útil
+  // del proveedor (en años) para obtener la fecha de vencimiento real antes de comparar.
+  if(fechaEsFabricacion && vidaUtilAnios){
+    fecha.setFullYear(fecha.getFullYear() + Number(vidaUtilAnios));
+  }
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const diffDias = Math.floor((fecha - hoy) / 86400000);
+  const dAveria = Number(diasAveria);
+  const dCorta = Number(diasFechaCorta);
+  // Política Altipal por proveedor: rojo = dentro del rango de avería;
+  // amarillo = dentro del rango de fecha corta (avería + buena-a-corta); verde = buena fecha.
+  if(!isNaN(dAveria) && diffDias <= dAveria) return 'fila-rojo';
+  if(!isNaN(dAveria) && !isNaN(dCorta) && diffDias <= (dAveria + dCorta)) return 'fila-amarillo';
+  if(isNaN(dAveria) && !isNaN(dCorta) && diffDias <= dCorta) return 'fila-amarillo';
+  if(!isNaN(dAveria) || !isNaN(dCorta)) return 'fila-verde';
+  // Sin política conocida para el proveedor: se usan rangos genéricos de respaldo.
+  if(diffDias <= 5) return 'fila-rojo';
+  if(diffDias <= 30) return 'fila-amarillo';
+  if(diffDias <= 60) return 'fila-azul';
+  return 'fila-verde';
+}
+
+function colorFechaCorta(fechaStr, diasAveria, diasFechaCorta, fechaEsFabricacion, vidaUtilAnios){
+  const clase = claseFecha(fechaStr, diasAveria, diasFechaCorta, fechaEsFabricacion, vidaUtilAnios);
+  if(clase==='fila-rojo') return '#F8A9A9';
+  if(clase==='fila-amarillo') return '#FFF2A8';
+  if(clase==='fila-azul') return '#A9C9F8';
+  if(clase==='fila-verde') return '#B7E6B0';
+  return '';
+}
+
+// Si un cíclico ya tenía datos guardados (en esta sesión o sincronizados desde la nube)
+// de antes de ampliar a PICKING2 y ALTURA7/ALTURA8, sus arreglos de registros quedan
+// más cortos que NUM_REGISTROS. Esta función los completa con '' hasta la nueva
+// longitud, para que las columnas nuevas siempre aparezcan (con su fecha, lote y color).
+function asegurarRegistros(f){
+  ['_registros','_registrosFecha','_registrosLote'].forEach(key=>{
+    if(!Array.isArray(f[key])) f[key] = [];
+    while(f[key].length < NUM_REGISTROS) f[key].push('');
+  });
+}
+
+/* ---------------- KPI DE CONTEO (TIEMPOS POR PERSONA) ---------------- */
+// Cada cíclico guarda, para cada uno de los 3 responsables (1,2,3):
+// { corriendo:bool, inicio:ISOString|null, persona:string, historial:[{persona,inicio,fin,segundos}] }
+// El "historial" permite que, si la misma persona (u otra) vuelve a contar esa
+// misma hoja más adelante, quede un nuevo registro sin perder el anterior.
+function crearTiempoVacio(){
+  return { corriendo:false, inicio:null, persona:'', historial:[] };
+}
+
+// Compatibilidad: cíclicos creados antes de esta función (cargados de la nube
+// o de una sesión vieja) no tienen "tiempos" todavía, así que se completan aquí.
+function asegurarTiempos(c){
+  if(!c.tiempos) c.tiempos = {};
+  [1,2,3].forEach(n=>{
+    if(!c.tiempos[n]) c.tiempos[n] = crearTiempoVacio();
+    if(!Array.isArray(c.tiempos[n].historial)) c.tiempos[n].historial = [];
+  });
+}
+
+function formatDuracion(segundosTotal){
+  segundosTotal = Math.max(0, Math.round(segundosTotal||0));
+  const h = Math.floor(segundosTotal/3600);
+  const m = Math.floor((segundosTotal%3600)/60);
+  const s = segundosTotal%60;
+  if(h>0) return `${h}h ${m}m`;
+  if(m>0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function obtenerPersonaSeleccionada(numero){
+  const sel = document.getElementById('hConteo'+numero);
+  const otro = document.getElementById('hConteo'+numero+'Otro');
+  if(!sel) return '';
+  return sel.value === 'OTROS' ? (otro ? otro.value.trim() : '') : sel.value;
+}
+
+function iniciarConteoPersona(numero){
+  const c = ciclicos[ciclicoActualId];
+  if(!c) return;
+  asegurarTiempos(c);
+  const t = c.tiempos[numero];
+  if(t.corriendo){ alert('Ya hay un conteo en curso para este responsable en este cíclico.'); return; }
+  const persona = obtenerPersonaSeleccionada(numero);
+  if(!persona){ alert('Primero selecciona el responsable de este conteo (Conteo #' + numero + ').'); return; }
+  t.persona = persona;
+  t.inicio = new Date().toISOString();
+  t.corriendo = true;
+  actualizarEstadoTiempo(numero);
+  guardarCiclicoEnNube(c);
+}
+
+function finalizarConteoPersona(numero){
+  const c = ciclicos[ciclicoActualId];
+  if(!c) return;
+  asegurarTiempos(c);
+  const t = c.tiempos[numero];
+  if(!t.corriendo){ alert('No hay un conteo en curso para finalizar en este responsable.'); return; }
+  const fin = new Date();
+  const inicio = new Date(t.inicio);
+  const segundos = Math.max(0, Math.round((fin - inicio)/1000));
+  t.historial.push({ persona: t.persona, inicio: t.inicio, fin: fin.toISOString(), segundos });
+  t.corriendo = false;
+  t.inicio = null;
+  actualizarEstadoTiempo(numero);
+  guardarCiclicoEnNube(c);
+}
+
+function actualizarEstadoTiempo(numero){
+  const c = ciclicos[ciclicoActualId];
+  const span = document.getElementById('estadoTiempo'+numero);
+  const btnIniciar = document.getElementById('btnIniciarTiempo'+numero);
+  const btnFinalizar = document.getElementById('btnFinalizarTiempo'+numero);
+  if(!c || !span || !btnIniciar || !btnFinalizar) return;
+  asegurarTiempos(c);
+  const t = c.tiempos[numero];
+  const totalHistorial = t.historial.reduce((a,s)=> a + (s.segundos||0), 0);
+
+  if(t.corriendo){
+    const horaInicio = new Date(t.inicio).toLocaleTimeString('es-CO', {hour:'2-digit', minute:'2-digit'});
+    span.innerHTML = `🟢 En curso desde ${horaInicio}`;
+    btnIniciar.classList.add('oculto');
+    btnFinalizar.classList.remove('oculto');
+  } else {
+    span.innerHTML = t.historial.length
+      ? `✔ ${t.historial.length} conteo(s) · ${formatDuracion(totalHistorial)} en total`
+      : 'Sin iniciar';
+    btnIniciar.classList.remove('oculto');
+    btnFinalizar.classList.add('oculto');
+  }
+}
+
+// Refresca cada tanto la hora "en curso desde..." mientras se está viendo el conteo,
+// para que se note que el cronómetro sigue corriendo sin tener que recargar nada.
+setInterval(()=>{
+  if(ciclicoActualId && !document.getElementById('vistaConteo').classList.contains('oculto')){
+    [1,2,3].forEach(actualizarEstadoTiempo);
+  }
+}, 20000);
+
+// Resumen de KPI por persona: cuántos cíclicos contó, tiempo total y tiempo promedio.
+function calcularKPIPorPersona(){
+  const mapa = {};
+  Object.values(ciclicos).forEach(c=>{
+    asegurarTiempos(c);
+    [1,2,3].forEach(n=>{
+      c.tiempos[n].historial.forEach(s=>{
+        const nombre = s.persona || '(Sin nombre)';
+        if(!mapa[nombre]) mapa[nombre] = { persona: nombre, conteos:0, segundosTotal:0 };
+        mapa[nombre].conteos++;
+        mapa[nombre].segundosTotal += (s.segundos||0);
+      });
+    });
+  });
+  return Object.values(mapa)
+    .map(p=> ({...p, promedioSegundos: p.conteos ? p.segundosTotal/p.conteos : 0}))
+    .sort((a,b)=> b.segundosTotal - a.segundosTotal);
+}
+
+// Duración total del ciclo de una referencia: desde que arrancó el primer
+// conteo (de los 3) hasta que terminó el último.
+function calcularDuracionCiclo(c){
+  asegurarTiempos(c);
+  const sesiones = [1,2,3].flatMap(n=> c.tiempos[n].historial);
+  if(!sesiones.length) return null;
+  const inicios = sesiones.map(s=> new Date(s.inicio).getTime());
+  const fines = sesiones.map(s=> new Date(s.fin).getTime());
+  return Math.round((Math.max(...fines) - Math.min(...inicios))/1000);
+}
+
+function pintarKPI(){
+  const personas = calcularKPIPorPersona();
+  const contPersonas = document.getElementById('resumenKPIPersonas');
+  if(!personas.length){
+    contPersonas.innerHTML = '<p style="font-size:12px;color:#888;">Todavía no hay conteos finalizados con tiempo registrado. Usa ▶ Iniciar / ⏹ Finalizar en la pantalla de conteo de cada cíclico.</p>';
+  } else {
+    contPersonas.innerHTML = `
+      <div class="tabla-scroll" style="max-height:none;">
+        <table class="dashboard-resumen" style="width:100%;">
+          <thead><tr>
+            <th class="headTabla">Persona</th>
+            <th class="headTabla">Cíclicos contados</th>
+            <th class="headTabla">Tiempo total</th>
+            <th class="headTabla">Tiempo promedio por cíclico</th>
+          </tr></thead>
+          <tbody>
+            ${personas.map(p=>`<tr>
+              <td style="text-align:left;">${p.persona}</td>
+              <td>${p.conteos}</td>
+              <td>${formatDuracion(p.segundosTotal)}</td>
+              <td>${formatDuracion(p.promedioSegundos)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  const filtro = (document.getElementById('filtroKPI')?.value || '').trim().toLowerCase();
+  const body = document.getElementById('bodyKPI');
+  const celdaPersona = (c, n)=>{
+    const t = c.tiempos[n];
+    if(t.corriendo) return `🟢 ${t.persona||'—'} (en curso)`;
+    if(!t.historial.length) return '—';
+    const seg = t.historial.reduce((a,s)=> a + (s.segundos||0), 0);
+    const ultimo = t.historial[t.historial.length-1];
+    return `${ultimo.persona||'—'} · ${formatDuracion(seg)}${t.historial.length>1 ? ` (${t.historial.length}x)` : ''}`;
+  };
+
+  const filas = Object.values(ciclicos)
+    .filter(c=>{
+      if(!filtro) return true;
+      const texto = `${c.nombre} ${c.almacen} ${c.ubicacion}`.toLowerCase();
+      return texto.includes(filtro);
+    })
+    .map(c=>{
+      asegurarTiempos(c);
+      const duracionCiclo = calcularDuracionCiclo(c);
+      const completo = [1,2,3].every(n=> c.tiempos[n].historial.length && !c.tiempos[n].corriendo);
+      return `<tr>
+        <td style="text-align:left;">${c.nombre}</td>
+        <td>${c.almacen}</td>
+        <td>${c.ubicacion}</td>
+        <td>${celdaPersona(c,1)}</td>
+        <td>${celdaPersona(c,2)}</td>
+        <td>${celdaPersona(c,3)}</td>
+        <td>${duracionCiclo!=null ? formatDuracion(duracionCiclo) : '—'}</td>
+        <td>${completo ? '✔ Completo' : '⏳ En proceso'}</td>
+      </tr>`;
+    });
+
+  body.innerHTML = filas.length ? filas.join('') : `<tr><td colspan="8" style="padding:14px;color:#888;">No hay cíclicos que coincidan.</td></tr>`;
+}
+
+function pintarTablaConteo(c){
+  const cols = ['Nombre','Código de artículo','Número de variante','Factor','Tipo','Código de barras',
+    'Cod. Barras caja','Nombre del producto','Almacén','Ubicación','CONTADO TOTAL']
+    .concat(REGISTRO_LABELS);
+  const numIdCols = cols.length - REGISTRO_LABELS.length; // columnas de identificación antes de los registros
+  const COLUMNAS_FIJAS = ['Código de artículo','Número de variante','Factor'];
+
+  document.getElementById('headConteo').innerHTML = cols.map(h=>{
+    const cls = COLUMNAS_FIJAS.includes(h) ? 'headTabla col-fija' : 'headTabla';
+    return `<th class="${cls}">${h}</th>`;
+  }).join('');
+
+  // Buscador de producto: filtra por Código de artículo o Nombre del producto,
+  // sin perder de cuál posición real (i) es cada fila dentro de c.filas.
+  const inputBusqueda = document.getElementById('buscarProductoConteo');
+  const filtro = inputBusqueda ? inputBusqueda.value.trim().toLowerCase() : '';
+  let coincidencias = 0;
+
+  const body = document.getElementById('bodyConteo');
+  body.innerHTML = '';
+  c.filas.forEach((f,i)=>{
+    if(filtro){
+      const texto = (
+        String(f['Código de artículo']||'') + ' ' +
+        String(f['Número de variante']||'') + ' ' +
+        String(f['Nombre del producto']||'') + ' ' +
+        String(f['Cod. Barras caja']||'') + ' ' +
+        String(f['Código de barras']||'')
+      ).toLowerCase();
+      if(!texto.includes(filtro)) return;
+    }
+    coincidencias++;
+
+    const codigo = f['Código de artículo'];
+    asegurarRegistros(f);
+    const total = f._registros.reduce((a,v)=> a + (Number(v)||0), 0);
+    const disponible = Number(f['Disponible'])||0;
+    const dif = total - disponible;
+
+    const tr = document.createElement('tr');
+    // "Resaltar diferencias" solo marca visualmente la fila (c._resaltado), sin decir cuánto es.
+    if(c._resaltado && dif !== 0) tr.classList.add('fila-diferencia');
+
+    // El "Disponible" del sistema y el número exacto de la diferencia NUNCA se muestran a quien
+    // está contando. Solo aparecen si el supervisor los revela con su clave (c._diferenciasReveladas).
+    const difTxt = (c._diferenciasReveladas && dif!==0) ? `(dif: ${dif>0?'+':''}${dif})` : '';
+
+    let html = `<td>${f['Nombre']}</td>
+      <td class="col-fija">${codigo}</td>
+      <td class="col-fija">${f['Número de variante']}</td>
+      <td class="col-fija">${f['Factor']}</td>
+      <td>${f['Tipo']}</td><td>${f['Código de barras']}</td>
+      <td>${f['Cod. Barras caja']}</td><td style="text-align:left;">${f['Nombre del producto']}</td>
+      <td>${f['Almacén']}</td><td>${f['Ubicación']}</td>
+      <td><b>${total}</b> ${difTxt}</td>`;
+
+    f._registros.forEach((val, ridx)=>{
+      html += `<td><input class="registro-input" type="number" value="${val}"
+        onchange="actualizarRegistro('${c.id.replace(/'/g,"\\'")}', ${i}, ${ridx}, this.value)"></td>`;
+    });
+    tr.innerHTML = html;
+    body.appendChild(tr);
+
+    // Fila auxiliar: fecha de vencimiento para cada columna PICKING/PICKING2/ALTURA1-8
+    const trFecha = document.createElement('tr');
+    trFecha.classList.add('fila-altura-extra');
+    const etiquetaFecha = c.header.fechaEsFabricacion ? 'Fecha de fabricación:' : 'Fecha de vencimiento:';
+    let htmlFecha = `<td colspan="${numIdCols}" style="text-align:right;background:#fff;font-weight:bold;color:var(--azul-oscuro);">${etiquetaFecha}</td>`;
+    f._registrosFecha.forEach((val, ridx)=>{
+      const colorFondo = colorFechaCorta(val, c.header.diasAveria, c.header.diasFechaCorta, c.header.fechaEsFabricacion, c.header.vidaUtilAnios);
+      htmlFecha += `<td style="background:${colorFondo||'#fff'};">
+        <input type="date" class="venc-input" value="${val||''}"
+          onchange="actualizarRegistroFecha('${c.id.replace(/'/g,"\\'")}', ${i}, ${ridx}, this.value)"></td>`;
+    });
+    trFecha.innerHTML = htmlFecha;
+    body.appendChild(trFecha);
+
+    // Fila auxiliar: lote para cada columna PICKING/PICKING2/ALTURA1-8
+    const trLote = document.createElement('tr');
+    trLote.classList.add('fila-altura-extra');
+    let htmlLote = `<td colspan="${numIdCols}" style="text-align:right;background:#fff;font-weight:bold;color:var(--azul-oscuro);">Lote:</td>`;
+    f._registrosLote.forEach((val, ridx)=>{
+      htmlLote += `<td><input type="text" class="venc-input" placeholder="Lote" value="${val||''}"
+        onchange="actualizarRegistroLote('${c.id.replace(/'/g,"\\'")}', ${i}, ${ridx}, this.value)"></td>`;
+    });
+    trLote.innerHTML = htmlLote;
+    body.appendChild(trLote);
+  });
+
+  if(inputBusqueda){
+    document.getElementById('contadorBusquedaConteo').innerText = filtro
+      ? `${coincidencias} de ${c.filas.length} productos`
+      : '';
+  }
+  if(filtro && coincidencias === 0){
+    body.innerHTML = `<tr><td colspan="${cols.length}" style="padding:14px;color:#888;">No se encontró ningún producto con "${filtro}".</td></tr>`;
+  }
+
+  fijarColumnasConteo();
+}
+
+// Calcula el ancho real (ya renderizado) de cada columna inmovilizada y le asigna
+// su posición "left" correspondiente, tanto en el encabezado como en cada fila,
+// para que Código de artículo, Número de variante y Factor queden siempre visibles
+// al desplazarse hacia la derecha.
+function fijarColumnasConteo(){
+  const headerFijas = document.querySelectorAll('#headConteo th.col-fija');
+  if(!headerFijas.length) return;
+
+  const anchos = [];
+  let acumulado = 0;
+  headerFijas.forEach(th=>{
+    th.style.left = acumulado + 'px';
+    const w = th.getBoundingClientRect().width;
+    anchos.push(w);
+    acumulado += w;
+  });
+
+  document.querySelectorAll('#bodyConteo tr').forEach(tr=>{
+    const celdas = tr.querySelectorAll('td.col-fija');
+    let acc = 0;
+    celdas.forEach((td, idx)=>{
+      td.style.left = acc + 'px';
+      const w = anchos[idx] !== undefined ? anchos[idx] : td.getBoundingClientRect().width;
+      acc += w;
+    });
+  });
+}
+
+function actualizarRegistroFecha(ciclicoId, filaIdx, registroIdx, valor){
+  const c = ciclicos[ciclicoId];
+  asegurarRegistros(c.filas[filaIdx]);
+  c.filas[filaIdx]._registrosFecha[registroIdx] = valor;
+  pintarTablaConteo(c);
+  guardarCiclicoEnNube(c);
+}
+
+function actualizarRegistroLote(ciclicoId, filaIdx, registroIdx, valor){
+  const c = ciclicos[ciclicoId];
+  asegurarRegistros(c.filas[filaIdx]);
+  c.filas[filaIdx]._registrosLote[registroIdx] = valor;
+  guardarCiclicoEnNube(c);
+}
+
+function actualizarRegistro(ciclicoId, filaIdx, registroIdx, valor){
+  const c = ciclicos[ciclicoId];
+  asegurarRegistros(c.filas[filaIdx]);
+  c.filas[filaIdx]._registros[registroIdx] = valor;
+  pintarTablaConteo(c);
+  guardarCiclicoEnNube(c);
+}
+
+// "Resaltar diferencias": solo marca visualmente las filas que no cuadran (contado vs.
+// disponible), SIN mostrar el número de la diferencia. No requiere clave de supervisor,
+// porque no revela ningún valor sensible, solo indica que "algo no cuadra" en esa fila.
+function resaltarDiferencias(){
+  const c = ciclicos[ciclicoActualId];
+  c._resaltado = !c._resaltado;
+  pintarTablaConteo(c);
+  actualizarBotonResaltar(c);
+  guardarCiclicoEnNube(c);
+}
+
+// "Mostrar diferencia": revela el número exacto de la diferencia (unidades) en la fila
+// resaltada. Esto SÍ requiere la clave del supervisor, porque expone el Disponible/valor real.
+async function mostrarDiferencia(){
+  const c = ciclicos[ciclicoActualId];
+
+  if(c._diferenciasReveladas){
+    alert('La diferencia de esta hoja ya fue revelada por el supervisor (' + (c._supervisorRevelador||'') + ').');
+    return;
+  }
+
+  if(!(await requiereClaveSupervisor('Clave del supervisor para mostrar el número exacto de la diferencia en esta hoja cíclica:'))) return;
+
+  c._diferenciasReveladas = true;
+  c._supervisorRevelador = document.getElementById('hSupervisor').value || 'Supervisor';
+  // Al mostrar la diferencia también se activa el resaltado, para que se vea de una vez cuál fila es.
+  c._resaltado = true;
+  pintarTablaConteo(c);
+  actualizarBotonResaltar(c);
+  guardarCiclicoEnNube(c);
+}
+
+function actualizarBotonResaltar(c){
+  const btn = document.getElementById('btnResaltar');
+  const btnDif = document.getElementById('btnMostrarDif');
+  if(btn){
+    if(c._resaltado){
+      btn.innerText = '✔ Diferencias resaltadas';
+      btn.classList.remove('rojo');
+      btn.classList.add('verde');
+    } else {
+      btn.innerText = 'Resaltar diferencias';
+      btn.classList.remove('verde');
+      btn.classList.add('rojo');
+    }
+  }
+  if(btnDif){
+    btnDif.innerText = c._diferenciasReveladas ? '✔ Diferencia mostrada' : '👁 Mostrar diferencia (supervisor)';
+  }
+}
+
+/* ---------------- DASHBOARD ---------------- */
+function calcularResumen(){
+  let totalCiclicos = 0, totalReferencias = 0, totalDiferencias = 0, totalUnidadesDif = 0, totalDineroDif = 0;
+  Object.values(ciclicos).forEach(c=>{
+    totalCiclicos++;
+    c.filas.forEach(f=>{
+      totalReferencias++;
+      const registros = f._registros || Array(NUM_REGISTROS).fill('');
+      const total = registros.reduce((a,v)=> a + (Number(v)||0), 0);
+      const disponible = Number(f['Disponible'])||0;
+      const dif = total - disponible;
+      if(dif !== 0){
+        totalDiferencias++;
+        totalUnidadesDif += dif;
+        const precio = Number(f['Precio de coste'])||0;
+        totalDineroDif += dif * precio;
+      }
+    });
+  });
+  return {totalCiclicos, totalReferencias, totalDiferencias, totalUnidadesDif, totalDineroDif};
+}
+
+// Agrupa el faltante/sobrante por proveedor (casa comercial), sumando todas las
+// referencias de todos los cíclicos que pertenecen a ese proveedor.
+function calcularResumenPorProveedor(){
+  const mapa = {};
+  Object.values(ciclicos).forEach(c=>{
+    const proveedor = c.nombre || '(Sin proveedor)';
+    if(!mapa[proveedor]){
+      mapa[proveedor] = {proveedor, unidadesContadas:0, unidadesDisponibles:0, valorContado:0, valorDisponible:0, tieneTroque:false};
+    }
+    c.filas.forEach(f=>{
+      const registros = f._registros || Array(NUM_REGISTROS).fill('');
+      const contado = registros.reduce((a,v)=> a + (Number(v)||0), 0);
+      const disponible = Number(f['Disponible'])||0;
+      const precio = Number(f['Precio de coste'])||0;
+      mapa[proveedor].unidadesContadas += contado;
+      mapa[proveedor].unidadesDisponibles += disponible;
+      mapa[proveedor].valorContado += contado * precio;
+      mapa[proveedor].valorDisponible += disponible * precio;
+
+      // TROQUE: si en el lote digitado de cualquier columna (PICKING/PICKING2/ALTURA1-8)
+      // el operario escribió "TROQUE", se marca el proveedor para resaltarlo en el PDF.
+      const lotes = f._registrosLote || [];
+      if(lotes.some(l => String(l||'').toUpperCase().includes('TROQUE'))){
+        mapa[proveedor].tieneTroque = true;
+      }
+    });
+  });
+  return Object.values(mapa)
+    .map(p=>({
+      ...p,
+      diferenciaUnidades: p.unidadesContadas - p.unidadesDisponibles,
+      diferenciaValor: p.valorContado - p.valorDisponible
+    }))
+    .sort((a,b)=> a.proveedor.localeCompare(b.proveedor, 'es'));
+}
+
+function pintarDashboard(){
+  const r = calcularResumen();
+  document.getElementById('resumenDashboard').innerHTML = `
+    <table class="dashboard-resumen">
+      <tr><th>Cíclicos</th><td>${r.totalCiclicos}</td></tr>
+      <tr><th>Referencias totales</th><td>${r.totalReferencias}</td></tr>
+      <tr><th>Líneas con diferencia</th><td>${r.totalDiferencias}</td></tr>
+      <tr><th>Diferencia en unidades</th><td>${r.totalUnidadesDif}</td></tr>
+      <tr><th>Diferencia en dinero</th><td>$${r.totalDineroDif.toLocaleString('es-CO', {maximumFractionDigits:0})}</td></tr>
+    </table>`;
+}
+
+/* ---------------- DIFERENCIAS (SOLO SUPERVISOR) ---------------- */
+let accesoDiferenciasValidado = false;
+
+async function abrirVistaDiferencias(){
+  if(!Object.keys(ciclicos).length){ alert('Primero carga o sincroniza un archivo.'); return; }
+
+  if(!accesoDiferenciasValidado){
+    if(!(await requiereClaveSupervisor('Clave del supervisor para ver la tabla de diferencias:'))) return;
+    accesoDiferenciasValidado = true;
+  }
+
+  mostrarVista('vistaDiferencias');
+  pintarTablaDiferencias();
+}
+
+function pintarTablaDiferencias(){
+  const filtro = (document.getElementById('filtroCasaDif').value || '').trim().toUpperCase();
+  const body = document.getElementById('bodyDiferencias');
+  let filas = [];
+
+  Object.values(ciclicos).forEach(c=>{
+    if(filtro && !String(c.nombre||'').toUpperCase().includes(filtro)) return;
+    c.filas.forEach(f=>{
+      const registros = f._registros || Array(NUM_REGISTROS).fill('');
+      const total = registros.reduce((a,v)=> a + (Number(v)||0), 0);
+      const disponible = Number(f['Disponible'])||0;
+      const dif = total - disponible;
+      if(dif === 0) return;
+      const precio = Number(f['Precio de coste'])||0;
+      filas.push({
+        casa: c.nombre, almacen: c.almacen, ubicacion: c.ubicacion,
+        codigo: f['Código de artículo'], nombreProducto: f['Nombre del producto'],
+        disponible, total, dif, difDinero: dif*precio,
+        validada: c._diferenciasReveladas ? (c._supervisorRevelador||'Sí') : 'No'
+      });
+    });
+  });
+
+  document.getElementById('resumenDiferencias').innerText =
+    `${filas.length} referencia(s) con diferencia encontradas.`;
+
+  if(!filas.length){
+    body.innerHTML = `<tr><td colspan="10">No hay diferencias para mostrar.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = filas.map(r=>`
+    <tr>
+      <td>${r.casa}</td><td>${r.almacen}</td><td>${r.ubicacion}</td>
+      <td>${r.codigo}</td><td style="text-align:left;">${r.nombreProducto}</td>
+      <td>${r.disponible}</td><td>${r.total}</td>
+      <td style="color:${r.dif>0?'#1E8449':'#C0392B'};font-weight:bold;">${r.dif>0?'+':''}${r.dif}</td>
+      <td>$${r.difDinero.toLocaleString('es-CO',{maximumFractionDigits:0})}</td>
+      <td>${r.validada}</td>
+    </tr>`).join('');
+}
+
+/* ---------------- EXPORTAR PDF ---------------- */
+const PDF_SUPERVISOR_PASS = SUPERVISOR_PASS; // el PDF usa la misma clave de supervisor
+const FILAS_POR_HOJA_PDF = 18; // referencias por hoja para que cada página se vea ordenada
+const PROVEEDORES_POR_HOJA_PDF = 22; // proveedores por hoja en la tabla de faltante/sobrante
+const CICLICOS_POR_HOJA_KPI_PDF = 22; // cíclicos por hoja en la tabla de detalle de KPI
+
+// Página de KPI: resumen de tiempos por persona (Conteo #1/#2/#3), para el informe general.
+function renderResumenKPIPersonasHTML(personas){
+  const filasHtml = personas.length
+    ? personas.map(p=>`<tr>
+        <td style="text-align:left;">${p.persona}</td>
+        <td>${p.conteos}</td>
+        <td>${formatDuracion(p.segundosTotal)}</td>
+        <td>${formatDuracion(p.promedioSegundos)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="4" style="text-align:center;color:#888;padding:10px;">Todavía no hay conteos finalizados con tiempo registrado.</td></tr>`;
+
+  return `<div style="padding:20px;font-family:Arial;">
+    <h1 style="color:#003C7E;font-size:20px;">⏱ KPI de conteo · Resumen por persona</h1>
+    <p style="font-size:12px;color:#555;">Tiempos medidos con los botones ▶ Iniciar / ⏹ Finalizar de cada responsable (Conteo #1, #2 y #3).</p>
+    <table style="border-collapse:collapse;width:100%;font-size:12px;">
+      <thead><tr>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Persona</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Cíclicos contados</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Tiempo total</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Tiempo promedio por cíclico</th>
+      </tr></thead>
+      <tbody>${filasHtml}</tbody>
+    </table>
+  </div>`;
+}
+
+// Página(s) de KPI: detalle por cíclico (quién contó, cuánto se demoró cada uno,
+// y cuánto duró el ciclo completo de esa referencia), para el informe general.
+function renderDetalleKPIHTML(chunk, paginaActual, totalPaginas){
+  const celdaPersona = (c, n)=>{
+    const t = c.tiempos[n];
+    if(t.corriendo) return `${t.persona||'—'} (en curso)`;
+    if(!t.historial.length) return '—';
+    const seg = t.historial.reduce((a,s)=> a + (s.segundos||0), 0);
+    const ultimo = t.historial[t.historial.length-1];
+    return `${ultimo.persona||'—'} · ${formatDuracion(seg)}${t.historial.length>1 ? ` (${t.historial.length}x)` : ''}`;
+  };
+
+  const filasHtml = chunk.map(c=>{
+    asegurarTiempos(c);
+    const duracionCiclo = calcularDuracionCiclo(c);
+    const completo = [1,2,3].every(n=> c.tiempos[n].historial.length && !c.tiempos[n].corriendo);
+    return `<tr>
+      <td style="text-align:left;">${c.nombre}</td>
+      <td>${c.almacen}</td>
+      <td>${c.ubicacion}</td>
+      <td>${celdaPersona(c,1)}</td>
+      <td>${celdaPersona(c,2)}</td>
+      <td>${celdaPersona(c,3)}</td>
+      <td>${duracionCiclo!=null ? formatDuracion(duracionCiclo) : '—'}</td>
+      <td>${completo ? 'Completo' : 'En proceso'}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div style="padding:16px;font-family:Arial;font-size:11px;">
+    <h1 style="color:#003C7E;font-size:16px;">⏱ KPI de conteo · Detalle por cíclico (Hoja ${paginaActual} de ${totalPaginas})</h1>
+    <table style="border-collapse:collapse;width:100%;">
+      <thead><tr>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Casa comercial</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Almacén</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Ubicación</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Conteo #1</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Conteo #2</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Conteo #3</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Duración del ciclo</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">Estado</th>
+      </tr></thead>
+      <tbody>${filasHtml}</tbody>
+    </table>
+  </div>`;
+}
+
+async function exportarPDF(){
+  if(!Object.keys(ciclicos).length){ alert('Primero carga un archivo.'); return; }
+
+  if(!(await requiereClaveSupervisor('Este reporte solo lo puede descargar el supervisor. Ingresa la clave del supervisor:'))) return;
+
+  document.getElementById('estadoExport').innerText = 'Generando PDF, esto puede tardar unos segundos...';
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF('l', 'pt', 'a4');
+  const buffer = document.getElementById('pdfBuffer');
+  buffer.style.width = '1100px';
+
+  // Página 1: dashboard resumen general
+  const r = calcularResumen();
+  buffer.innerHTML = `<div style="padding:20px;font-family:Arial;">
+    <h1 style="color:#003C7E;">Dashboard Inventario Cíclico - Altipal</h1>
+    <table class="dashboard-resumen" style="border-collapse:collapse;">
+      <tr><th style="border:1px solid #999;padding:6px;">Cíclicos</th><td style="border:1px solid #999;padding:6px;">${r.totalCiclicos}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Referencias totales</th><td style="border:1px solid #999;padding:6px;">${r.totalReferencias}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Líneas con diferencia</th><td style="border:1px solid #999;padding:6px;">${r.totalDiferencias}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Diferencia en unidades</th><td style="border:1px solid #999;padding:6px;">${r.totalUnidadesDif}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Diferencia en dinero</th><td style="border:1px solid #999;padding:6px;">$${r.totalDineroDif.toLocaleString('es-CO')}</td></tr>
+    </table>
+  </div>`;
+  let canvas = await html2canvas(buffer, {scale:2});
+  addCanvasPage(pdf, canvas, true);
+
+  // Página(s) siguiente(s): faltante/sobrante de unidades por proveedor (casa comercial),
+  // en unidades y en dinero. Si hay muchos proveedores se reparte en varias hojas.
+  const resumenProveedores = calcularResumenPorProveedor();
+  if(resumenProveedores.length){
+    const totalPagProv = Math.max(1, Math.ceil(resumenProveedores.length / PROVEEDORES_POR_HOJA_PDF));
+    for(let p=0; p<totalPagProv; p++){
+      const chunk = resumenProveedores.slice(p*PROVEEDORES_POR_HOJA_PDF, (p+1)*PROVEEDORES_POR_HOJA_PDF);
+      buffer.innerHTML = renderResumenProveedoresHTML(chunk, p+1, totalPagProv);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdf, canvas, false);
+    }
+  }
+
+  // Página(s) de KPI: tiempos por persona y detalle por cíclico
+  buffer.style.width = '1100px';
+  const kpiPersonas = calcularKPIPorPersona();
+  buffer.innerHTML = renderResumenKPIPersonasHTML(kpiPersonas);
+  canvas = await html2canvas(buffer, {scale:2});
+  addCanvasPage(pdf, canvas, false);
+
+  const ciclicosParaKPI = Object.values(ciclicos);
+  ciclicosParaKPI.forEach(asegurarTiempos);
+  if(ciclicosParaKPI.length){
+    const totalPagKPI = Math.max(1, Math.ceil(ciclicosParaKPI.length / CICLICOS_POR_HOJA_KPI_PDF));
+    for(let p=0; p<totalPagKPI; p++){
+      const chunk = ciclicosParaKPI.slice(p*CICLICOS_POR_HOJA_KPI_PDF, (p+1)*CICLICOS_POR_HOJA_KPI_PDF);
+      buffer.innerHTML = renderDetalleKPIHTML(chunk, p+1, totalPagKPI);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdf, canvas, false);
+    }
+  }
+
+  // Páginas siguientes: detalle de cada cíclico (con columnas Picking/Altura1-6)
+  buffer.style.width = '1650px';
+  const ids = Object.keys(ciclicos);
+  for(let k=0; k<ids.length; k++){
+    const c = ciclicos[ids[k]];
+    if(!c.filas.length) continue;
+
+    // Cada cíclico se reparte en varias hojas (páginas) de FILAS_POR_HOJA_PDF filas,
+    // cada una con marca de agua (nombre del cíclico + "Hoja X de Y") en la esquina
+    // superior izquierda, para saber cuántas hojas tiene ese cíclico.
+    const totalPaginas = Math.max(1, Math.ceil(c.filas.length / FILAS_POR_HOJA_PDF));
+    for(let p=0; p<totalPaginas; p++){
+      const chunk = c.filas.slice(p*FILAS_POR_HOJA_PDF, (p+1)*FILAS_POR_HOJA_PDF);
+      buffer.innerHTML = renderCiclicoPaginaHTML(c, chunk, p+1, totalPaginas);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdf, canvas, false);
+    }
+    document.getElementById('estadoExport').innerText = `Generando PDF... (${k+1}/${ids.length} cíclicos)`;
+  }
+
+  pdf.save('Dashboard_Inventario_Ciclico_Altipal.pdf');
+  document.getElementById('estadoExport').innerText = 'PDF generado y descargado.';
+  buffer.innerHTML = '';
+  buffer.style.width = '1100px';
+}
+
+// Convierte un texto en un nombre de archivo válido (sin caracteres prohibidos
+// en Windows/Mac: \ / : * ? " < > |), para poder usarlo como nombre dentro del ZIP.
+function nombreArchivoValido(texto){
+  return String(texto).replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g,' ').trim();
+}
+
+// Genera un archivo .zip que contiene: un PDF "Reporte General" (dashboard + faltante/
+// sobrante por proveedor) y un PDF individual por cada cíclico (casa comercial + almacén
+// + ubicación), nombrado exactamente así, ej: "BRINSA S.A. · Almacén 12001 · Ubicación A0111.pdf".
+async function exportarPDFsPorCasaComercial(){
+  if(!Object.keys(ciclicos).length){ alert('Primero carga un archivo.'); return; }
+
+  if(!(await requiereClaveSupervisor('Este reporte solo lo puede descargar el supervisor. Ingresa la clave del supervisor:'))) return;
+
+  document.getElementById('estadoExport').innerText = 'Generando PDFs separados por casa comercial...';
+  const { jsPDF } = window.jspdf;
+  const buffer = document.getElementById('pdfBuffer');
+  const zip = new JSZip();
+
+  // ---- Reporte General: dashboard resumen + faltante/sobrante por proveedor ----
+  buffer.style.width = '1100px';
+  const pdfGeneral = new jsPDF('l', 'pt', 'a4');
+  const r = calcularResumen();
+  buffer.innerHTML = `<div style="padding:20px;font-family:Arial;">
+    <h1 style="color:#003C7E;">Dashboard Inventario Cíclico - Altipal</h1>
+    <table class="dashboard-resumen" style="border-collapse:collapse;">
+      <tr><th style="border:1px solid #999;padding:6px;">Cíclicos</th><td style="border:1px solid #999;padding:6px;">${r.totalCiclicos}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Referencias totales</th><td style="border:1px solid #999;padding:6px;">${r.totalReferencias}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Líneas con diferencia</th><td style="border:1px solid #999;padding:6px;">${r.totalDiferencias}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Diferencia en unidades</th><td style="border:1px solid #999;padding:6px;">${r.totalUnidadesDif}</td></tr>
+      <tr><th style="border:1px solid #999;padding:6px;">Diferencia en dinero</th><td style="border:1px solid #999;padding:6px;">$${r.totalDineroDif.toLocaleString('es-CO')}</td></tr>
+    </table>
+  </div>`;
+  let canvas = await html2canvas(buffer, {scale:2});
+  addCanvasPage(pdfGeneral, canvas, true);
+
+  const resumenProveedores = calcularResumenPorProveedor();
+  if(resumenProveedores.length){
+    const totalPagProv = Math.max(1, Math.ceil(resumenProveedores.length / PROVEEDORES_POR_HOJA_PDF));
+    for(let p=0; p<totalPagProv; p++){
+      const chunk = resumenProveedores.slice(p*PROVEEDORES_POR_HOJA_PDF, (p+1)*PROVEEDORES_POR_HOJA_PDF);
+      buffer.innerHTML = renderResumenProveedoresHTML(chunk, p+1, totalPagProv);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdfGeneral, canvas, false);
+    }
+  }
+
+  // Página(s) de KPI: tiempos por persona y detalle por cíclico
+  buffer.style.width = '1100px';
+  const kpiPersonas = calcularKPIPorPersona();
+  buffer.innerHTML = renderResumenKPIPersonasHTML(kpiPersonas);
+  canvas = await html2canvas(buffer, {scale:2});
+  addCanvasPage(pdfGeneral, canvas, false);
+
+  const ciclicosParaKPI = Object.values(ciclicos);
+  ciclicosParaKPI.forEach(asegurarTiempos);
+  if(ciclicosParaKPI.length){
+    const totalPagKPI = Math.max(1, Math.ceil(ciclicosParaKPI.length / CICLICOS_POR_HOJA_KPI_PDF));
+    for(let p=0; p<totalPagKPI; p++){
+      const chunk = ciclicosParaKPI.slice(p*CICLICOS_POR_HOJA_KPI_PDF, (p+1)*CICLICOS_POR_HOJA_KPI_PDF);
+      buffer.innerHTML = renderDetalleKPIHTML(chunk, p+1, totalPagKPI);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdfGeneral, canvas, false);
+    }
+  }
+
+  zip.file('Reporte General.pdf', pdfGeneral.output('blob'));
+
+  // ---- Un PDF individual por cada cíclico (casa comercial + almacén + ubicación) ----
+  buffer.style.width = '1650px';
+  const ids = Object.keys(ciclicos);
+  const nombresUsados = {}; // evita sobrescribir si dos cíclicos comparten exactamente el mismo nombre de archivo
+
+  for(let k=0; k<ids.length; k++){
+    const c = ciclicos[ids[k]];
+    if(!c.filas.length) continue;
+
+    const pdfCiclico = new jsPDF('l', 'pt', 'a4');
+    const totalPaginas = Math.max(1, Math.ceil(c.filas.length / FILAS_POR_HOJA_PDF));
+    for(let p=0; p<totalPaginas; p++){
+      const chunk = c.filas.slice(p*FILAS_POR_HOJA_PDF, (p+1)*FILAS_POR_HOJA_PDF);
+      buffer.innerHTML = renderCiclicoPaginaHTML(c, chunk, p+1, totalPaginas);
+      canvas = await html2canvas(buffer, {scale:2});
+      addCanvasPage(pdfCiclico, canvas, p===0);
+    }
+
+    let nombreBase = nombreArchivoValido(`${c.nombre} · Almacén ${c.almacen} · Ubicación ${c.ubicacion}`);
+    if(nombresUsados[nombreBase] !== undefined){
+      nombresUsados[nombreBase]++;
+      nombreBase += ` (${nombresUsados[nombreBase]})`;
+    } else {
+      nombresUsados[nombreBase] = 0;
+    }
+
+    zip.file(nombreBase + '.pdf', pdfCiclico.output('blob'));
+    document.getElementById('estadoExport').innerText = `Generando PDFs... (${k+1}/${ids.length} cíclicos)`;
+  }
+
+  document.getElementById('estadoExport').innerText = 'Comprimiendo archivos en el .zip...';
+  const zipBlob = await zip.generateAsync({type:'blob'});
+
+  const url = URL.createObjectURL(zipBlob);
+  const enlace = document.createElement('a');
+  enlace.href = url;
+  enlace.download = 'Reportes_Ciclicos_Altipal_' + new Date().toISOString().slice(0,10) + '.zip';
+  document.body.appendChild(enlace);
+  enlace.click();
+  document.body.removeChild(enlace);
+  URL.revokeObjectURL(url);
+
+  document.getElementById('estadoExport').innerText = 'ZIP con PDFs separados por casa comercial generado y descargado.';
+  buffer.innerHTML = '';
+  buffer.style.width = '1100px';
+}
+
+// Tabla de faltante/sobrante por proveedor: unidades contadas, unidades disponibles,
+// diferencia en unidades, y lo mismo en dinero (valor contado, valor disponible, diferencia $).
+function renderResumenProveedoresHTML(chunk, paginaActual, totalPaginas){
+  const fmt = n => '$' + (Number(n)||0).toLocaleString('es-CO',{maximumFractionDigits:0});
+  const filasHtml = chunk.map(p=>{
+    const colorUnid = p.diferenciaUnidades !== 0 ? 'color:#C0392B;font-weight:bold;' : '';
+    const colorVal = p.diferenciaValor !== 0 ? 'color:#C0392B;font-weight:bold;' : '';
+    const filaBg = p.tieneTroque ? 'background:#FFE3B3;' : 'background:#fff;';
+    const celdaTroque = p.tieneTroque
+      ? '<span style="background:#F39C12;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px;">TROQUE</span>'
+      : '';
+    return `<tr style="${filaBg}">
+      <td style="text-align:left;">${p.proveedor}</td>
+      <td>${p.unidadesContadas}</td><td>${p.unidadesDisponibles}</td>
+      <td style="${colorUnid}">${p.diferenciaUnidades>0?'+':''}${p.diferenciaUnidades}</td>
+      <td>${fmt(p.valorContado)}</td><td>${fmt(p.valorDisponible)}</td>
+      <td style="${colorVal}">${fmt(p.diferenciaValor)}</td>
+      <td>${celdaTroque}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="pdf-pagina" style="padding:20px;font-family:Arial;font-size:12px;">
+    <div class="pdf-marca-agua">FALTANTE / SOBRANTE POR PROVEEDOR · Hoja ${paginaActual} de ${totalPaginas}</div>
+    <h1 style="color:#003C7E;margin-top:26px;">Faltante / sobrante de unidades por proveedor</h1>
+    <table style="border-collapse:collapse;width:100%;">
+      <thead><tr>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;text-align:left;">Proveedor (casa comercial)</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Unid. contadas</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Unid. disponibles</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Diferencia (unid.)</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Valor contado</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Valor disponible</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Diferencia ($)</th>
+        <th style="border:1px solid #999;background:#003C7E;color:#fff;padding:6px;">Troque</th>
+      </tr></thead>
+      <tbody>${filasHtml}</tbody>
+    </table>
+  </div>`;
+}
+
+
+function addCanvasPage(pdf, canvas, esPrimera){
+  const imgData = canvas.toDataURL('image/png');
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const ratio = Math.min(pageW / canvas.width, pageH / canvas.height);
+  const w = canvas.width * ratio, h = canvas.height * ratio;
+  if(!esPrimera) pdf.addPage();
+  pdf.addImage(imgData, 'PNG', (pageW-w)/2, 20, w, h);
+}
+
+// Estructura de la tabla del PDF (una fila por referencia):
+// Almacén, Ubicación, Casa comercial (proveedor), Código de artículo, Nombre del producto,
+// PICKING/PICKING2 y ALTURA1-8 (lo digitado en cada columna), Unidades contadas, Unidades disponibles,
+// Valor contado, Valor disponible, Diferencia (unidades) y Diferencia ($).
+function renderCiclicoPaginaHTML(c, filasChunk, paginaActual, totalPaginas){
+  const cols = ['Almacén','Ubicación','Casa comercial','Código de artículo','Nombre del producto']
+    .concat(REGISTRO_LABELS)
+    .concat(['Unid. contadas','Unid. disponibles','Valor contado','Valor disponible','Diferencia (unid.)','Diferencia ($)']);
+
+  const fmt = n => '$' + (Number(n)||0).toLocaleString('es-CO',{maximumFractionDigits:0});
+
+  let filasHtml = '';
+  filasChunk.forEach(f=>{
+    const registros = f._registros || Array(NUM_REGISTROS).fill('');
+    const contado = registros.reduce((a,v)=> a + (Number(v)||0), 0);
+    const disponible = Number(f['Disponible'])||0;
+    const precio = Number(f['Precio de coste'])||0;
+    const dif = contado - disponible;
+    const valorContado = contado * precio;
+    const valorDisponible = disponible * precio;
+    const difDinero = dif * precio;
+    const colorDif = dif !== 0 ? 'color:#C0392B;font-weight:bold;' : '';
+    const registrosHtml = registros.map(v=>`<td>${v!==''&&v!==null&&v!==undefined ? v : ''}</td>`).join('');
+    filasHtml += `<tr style="background:#fff;">
+      <td>${f['Almacén']}</td><td>${f['Ubicación']}</td><td style="text-align:left;">${c.nombre}</td>
+      <td>${f['Código de artículo']}</td><td style="text-align:left;">${f['Nombre del producto']}</td>
+      ${registrosHtml}
+      <td><b>${contado}</b></td><td>${disponible}</td>
+      <td>${fmt(valorContado)}</td><td>${fmt(valorDisponible)}</td>
+      <td style="${colorDif}">${dif>0?'+':''}${dif}</td>
+      <td style="${colorDif}">${fmt(difDinero)}</td>
+    </tr>`;
+  });
+
+  return `<div class="pdf-pagina" style="padding:16px;font-family:Arial;font-size:11px;">
+    <div class="pdf-marca-agua">${(c.nombre||'').toUpperCase()} · Hoja ${paginaActual} de ${totalPaginas}</div>
+    <table style="border-collapse:collapse;width:100%;margin:26px 0 8px;">
+      <tr>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">DIAS FECHA CORTA</td><td style="border:1px solid #999;padding:4px;">${c.header.diasFechaCorta||''}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">DIAS AVERIA</td><td style="border:1px solid #999;padding:4px;">${c.header.diasAveria||''}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">DIGA</td><td style="border:1px solid #999;padding:4px;">${c.header.diga||''}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">CONTEO #1</td><td style="border:1px solid #999;padding:4px;">${c.header.conteo1||''}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">CASA COMERCIAL</td><td style="border:1px solid #999;padding:4px;" colspan="3">${c.nombre}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">ALMACEN</td><td style="border:1px solid #999;padding:4px;">${c.almacen}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">UBICACION</td><td style="border:1px solid #999;padding:4px;">${c.ubicacion}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">CONTEO #2</td><td style="border:1px solid #999;padding:4px;">${c.header.conteo2||''}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">CONTEO #3</td><td style="border:1px solid #999;padding:4px;">${c.header.conteo3||''}</td>
+        <td style="border:1px solid #999;background:#EAF1FB;font-weight:bold;padding:4px;">SUPERVISOR/COORD.</td><td style="border:1px solid #999;padding:4px;" colspan="3">${c.header.supervisor||''}</td>
+      </tr>
+    </table>
+    <table style="border-collapse:collapse;width:100%;">
+      <thead><tr>${cols.map(h=>`<th style="border:1px solid #999;background:#003C7E;color:#fff;padding:4px;">${h}</th>`).join('')}</tr></thead>
+      <tbody>${filasHtml}</tbody>
+    </table>
+  </div>`;
+}
+
+/* ---------------- EXPORTAR EXCEL ---------------- */
+function exportarExcel(){
+  // Usa los cíclicos en memoria (ya sea porque tú cargaste el archivo, o porque
+  // llegaron sincronizados desde la nube gracias a otra persona del equipo).
+  const todasLasFilas = Object.values(ciclicos).flatMap(c=> c.filas.map(f=> ({fila:f, c})));
+  if(!todasLasFilas.length){ alert('Primero carga un archivo (o espera a que llegue la sincronización).'); return; }
+
+  const salida = todasLasFilas.map(({fila:row, c})=>{
+    let contado = 0;
+    if(row._registros){
+      contado = row._registros.reduce((a,v)=> a + (Number(v)||0), 0);
+    }
+    const disponible = Number(row['Disponible'])||0;
+    const diferenciaUnidades = contado - disponible;
+    const precio = Number(row['Precio de coste'])||0;
+    const diferenciaDinero = diferenciaUnidades * precio;
+
+    const nueva = {...row};
+    delete nueva._registros; delete nueva._registrosFecha; delete nueva._registrosLote;
+    delete nueva._marcarDiferencia;
+    nueva['Contado'] = contado;
+    nueva['Cantidad'] = diferenciaUnidades;
+    nueva['Importe de coste'] = diferenciaDinero;
+    nueva['Diferencia mostrada por supervisor'] = c && c._diferenciasReveladas ? (c._supervisorRevelador||'Sí') : '';
+    return nueva;
+  });
+
+  const ws = XLSX.utils.json_to_sheet(salida, {header: HEADERS.concat(['Diferencia mostrada por supervisor'])});
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Inventario Final');
+  XLSX.writeFile(wb, 'Inventario_Ciclico_Final_Altipal.xlsx');
+  document.getElementById('estadoExport').innerText = 'Excel generado y descargado.';
+}
+
+/* ---------------- EXPORTAR EXCEL DE FECHAS Y LOTES ---------------- */
+// Un producto puede tener varias fechas de vencimiento y lotes (uno por cada
+// columna PICKING/PICKING2/ALTURA1-8 donde se contó algo). Este reporte pone cada
+// combinación de fecha+lote en su propia fila, una debajo de la otra.
+function exportarExcelFechas(){
+  const filasSalida = [];
+
+  Object.values(ciclicos).forEach(c=>{
+    c.filas.forEach(f=>{
+      const registros = f._registros || Array(NUM_REGISTROS).fill('');
+      const registrosFecha = f._registrosFecha || Array(NUM_REGISTROS).fill('');
+      const registrosLote = f._registrosLote || Array(NUM_REGISTROS).fill('');
+
+      registros.forEach((valor, ridx)=>{
+        const tieneValor = valor !== '' && valor !== null && valor !== undefined;
+        const tieneFecha = !!registrosFecha[ridx];
+        const tieneLote = !!registrosLote[ridx];
+        if(!tieneValor && !tieneFecha && !tieneLote) return; // columna sin nada digitado, se omite
+
+        filasSalida.push({
+          'Almacén': f['Almacén'],
+          'Código de artículo': f['Código de artículo'],
+          'Número de variante': f['Número de variante'],
+          'Nombre del producto': f['Nombre del producto'],
+          'Columna (Picking/Altura)': REGISTRO_LABELS[ridx],
+          'Contado': tieneValor ? Number(valor)||0 : '',
+          'Fecha de vencimiento': registrosFecha[ridx] || '',
+          'Lote': registrosLote[ridx] || ''
+        });
+      });
+    });
+  });
+
+  if(!filasSalida.length){
+    alert('No hay fechas/lotes digitados todavía para generar este reporte.');
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(filasSalida, {
+    header: ['Almacén','Código de artículo','Número de variante','Nombre del producto','Columna (Picking/Altura)','Contado','Fecha de vencimiento','Lote']
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Fechas y Lotes');
+  XLSX.writeFile(wb, 'Reporte_Fechas_Lotes_Altipal.xlsx');
+  document.getElementById('estadoExport').innerText = 'Excel de fechas y lotes generado y descargado.';
+}
+</script>
+</body>
+</html>
